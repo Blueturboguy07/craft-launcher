@@ -257,8 +257,7 @@ impl NativeBackend {
                             let Some(app) = queue.lock().unwrap_or_else(PoisonError::into_inner).pop() else { break };
                             let (latest, from, used) = match &mirror {
                                 Some(_) => mirror_latest(app, feed.as_ref(), now),
-                                None => publik_latest(app, source.as_ref(), &shared, platform, fallback.github_every, pre, force, now)
-                                    .unwrap_or_else(|| latest_for(app, feed.as_ref(), fallback, source.as_ref(), &shared, pre, force, now)),
+                                None => release_for(app, feed.as_ref(), fallback, source.as_ref(), &shared, platform, pre, force, now),
                             };
                             if let Some(used) = used {
                                 sources.lock().unwrap_or_else(PoisonError::into_inner).push(used);
@@ -758,12 +757,36 @@ fn latest_for(
     }
 }
 
+/// The release to offer for `app`: publik's own build first ([`publik_latest`]); else, for a
+/// Craft App, ArtCraft's release ([`latest_for`]), as before. The launcher updates itself only
+/// from publik's fork: ArtCraft's launcher would replace this one and drop the publik-first
+/// lookup, so with no publik build of the launcher for this platform there is no launcher update.
+#[allow(clippy::too_many_arguments)]
+fn release_for(
+    app: &CraftApp,
+    feed: Option<&Feed>,
+    fallback: Fallback,
+    source: &dyn ReleaseSource,
+    shared: &Shared,
+    platform: Option<Platform>,
+    pre: bool,
+    force: bool,
+    now: i64,
+) -> (Option<LatestRelease>, Origin, Option<Source>) {
+    if let Some(found) = publik_latest(app, source, shared, platform, fallback.github_every, pre, force, now) {
+        return found;
+    }
+    if app.id == LAUNCHER_ID {
+        return (None, Origin::GitHub, None);
+    }
+    latest_for(app, feed, fallback, source, shared, pre, force, now)
+}
+
 /// publik's own build of `app` (the launcher included), when publik's fork has one for this
 /// platform: the newest release tagged `…-publik.<n>` on `Blueturboguy07/<repo>`. The fork is
 /// asked as often as GitHub is for the fallback (`every` seconds per app, unless `force`);
 /// between times, and while GitHub doesn't answer, the saved answer stands. `None` when the fork
-/// has no such build, has none for this platform, or can't be asked and nothing is saved: then
-/// ArtCraft's own release decides, as before.
+/// has no such build, has none for this platform, or can't be asked and nothing is saved.
 #[allow(clippy::too_many_arguments)]
 fn publik_latest(
     app: &CraftApp,
@@ -1663,12 +1686,14 @@ mod tests {
         };
         assert_eq!(r.tag, "v0.6.0");
         let word = CraftApp::by_id("wordcraft").unwrap();
-        assert_eq!(publik_latest(word, &source, &shared, Some(MAC), HOUR, false, false, NOW), None);
-        let (Some(LatestRelease::Found(r)), Origin::GitHub, _) = latest_for(word, Some(&feed()), LOADED, &source, &shared, false, false, NOW) else {
+        let (Some(LatestRelease::Found(r)), Origin::GitHub, _) =
+            release_for(word, Some(&feed()), LOADED, &source, &shared, Some(MAC), false, false, NOW)
+        else {
             panic!("no fallback")
         };
         assert_eq!(r.html_url, "https://github.com/storytold/wordcraft/releases/tag/v0.7.0");
         assert!(!r.is_publik());
+        assert_eq!(source.asked.lock().unwrap().iter().filter(|a| *a == "publik Blueturboguy07/wordcraft").count(), 1);
         // The forks are asked as rarely as GitHub is for the fallback.
         let asked = |repo: &str| source.asked.lock().unwrap().iter().filter(|a| *a == repo).count();
         assert_eq!(asked("publik Blueturboguy07/gridcraft"), 2, "once, and once more when forced");
@@ -1696,11 +1721,31 @@ mod tests {
         let same = format!("v{current}-publik.3");
         let rebuilt = artcraft_launcher_core::release::publik_tag(&same).unwrap();
         assert!(!version::is_newer(&rebuilt, &current));
-        // No publik build of the launcher: ArtCraft's launcher repo, as before.
+        let (Some(LatestRelease::Found(r)), ..) = release_for(&LAUNCHER, None, LOADED, &source, &shared(), Some(MAC), false, false, NOW) else {
+            panic!("no publik build of the launcher")
+        };
+        assert_eq!(r.tag, "v9.0.0-publik.1");
+    }
+
+    #[test]
+    fn without_a_publik_build_the_launcher_offers_no_update() {
+        let fork = "Blueturboguy07/craft-launcher";
+        // No publik release at all; a newer storytold launcher exists (every `latest` finds one).
         let none = Forked::default();
-        assert_eq!(publik_latest(&LAUNCHER, &none, &shared(), Some(MAC), HOUR, false, false, NOW), None);
-        let (Some(LatestRelease::Found(r)), ..) = latest_for(&LAUNCHER, None, LOADED, &none, &shared(), false, false, NOW) else { panic!() };
-        assert!(r.html_url.starts_with("https://github.com/storytold/craft-launcher/"));
+        assert_eq!(release_for(&LAUNCHER, None, LOADED, &none, &shared(), Some(MAC), false, true, NOW), (None, Origin::GitHub, None));
+        // A publik build with nothing for this platform; the fork couldn't be asked.
+        let windows_only = publik_build(fork, "v9.0.0-publik.1", &["artcraft-launcher-9.0.0-windows-x64.msi"]);
+        for answer in [windows_only, LatestRelease::Failed("offline".into()), LatestRelease::None] {
+            let source = Forked { forks: HashMap::from([(fork.to_string(), answer.clone())]), ..Default::default() };
+            assert_eq!(
+                release_for(&LAUNCHER, None, LOADED, &source, &shared(), Some(MAC), false, true, NOW),
+                (None, Origin::GitHub, None),
+                "{answer:?}"
+            );
+            // storytold's launcher repo is never asked.
+            assert_eq!(source.asked.lock().unwrap().as_slice(), [format!("publik {fork}")], "{answer:?}");
+        }
+        assert!(none.asked.lock().unwrap().iter().all(|a| !a.contains("storytold")));
     }
 
     #[test]
