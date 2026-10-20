@@ -3,6 +3,12 @@
 use std::cmp::Ordering;
 
 pub use semver::Version;
+use semver::BuildMetadata;
+
+/// The build metadata that marks publik's own build of an app: `0.8.0+publik.1` for release
+/// `v0.8.0-publik.1`, `0.8.0+publik` for an installed copy (its build number isn't recorded).
+/// Build metadata never affects ordering, so publik's 0.8.0 is the same version as ArtCraft's.
+pub const PUBLIK: &str = "publik";
 
 /// Reads a version from a tag or an installed-version string.
 ///
@@ -97,6 +103,34 @@ fn digits(text: &str, from: usize) -> Option<(u64, usize)> {
     text.get(from..end)?.parse().ok().map(|n| (n, end))
 }
 
+/// `v` marked as publik's build: build `n` of a release, or `None` for an installed copy.
+pub fn publik(mut v: Version, n: Option<u64>) -> Version {
+    let build = n.map_or_else(|| PUBLIK.to_string(), |n| format!("{PUBLIK}.{n}"));
+    v.build = BuildMetadata::new(&build).unwrap_or(BuildMetadata::EMPTY);
+    v
+}
+
+/// Whether `v` is publik's build (`+publik` or `+publik.<n>`).
+pub fn is_publik(v: &Version) -> bool {
+    let build = v.build.as_str();
+    build == PUBLIK || publik_number(v).is_some()
+}
+
+/// The `n` of publik's build `+publik.<n>`.
+pub fn publik_number(v: &Version) -> Option<u64> {
+    v.build.as_str().strip_prefix(PUBLIK)?.strip_prefix('.')?.parse().ok()
+}
+
+/// `v` as the UI shows it: without publik's mark, which the UI shows as words instead.
+pub fn label(v: &Version) -> String {
+    if !is_publik(v) {
+        return v.to_string();
+    }
+    let mut plain = v.clone();
+    plain.build = BuildMetadata::EMPTY;
+    plain.to_string()
+}
+
 /// A version that's a plain `X.Y.Z` with no pre-release suffix.
 pub fn is_stable(v: &Version) -> bool {
     v.pre.is_empty()
@@ -179,5 +213,26 @@ mod tests {
         // An MSI that recorded 0.3.0 for 0.3.0-rc.2 is not out of date against 0.3.0-rc.2.
         assert!(!is_update(&v("0.3.0-rc.2"), &v("0.3.0")));
         assert!(is_stable(&v("1.0.0")) && !is_stable(&v("1.0.0-beta.1")));
+    }
+
+    #[test]
+    fn publik_builds_are_marked_but_order_like_the_same_version() {
+        let release = publik(v("0.8.0"), Some(2));
+        assert_eq!(release.to_string(), "0.8.0+publik.2");
+        assert_eq!(publik_number(&release), Some(2));
+        let installed = publik(v("0.8.0"), None);
+        assert_eq!(installed.to_string(), "0.8.0+publik");
+        assert_eq!(publik_number(&installed), None);
+        assert!(is_publik(&release) && is_publik(&installed));
+        for other in ["0.8.0", "0.8.0+abc", "0.8.0+publikx", "0.8.0+publik.x", "0.8.0-publik.1"] {
+            assert!(!is_publik(&v(other)), "{other}");
+        }
+        // The same numbers, whoever built them: not an update either way.
+        assert!(!is_update(&release, &v("0.8.0")) && !is_update(&v("0.8.0"), &installed));
+        assert!(is_update(&release, &v("0.7.0")) && is_update(&v("0.9.0"), &installed));
+        // The UI shows the numbers; the mark is shown as words.
+        assert_eq!(label(&release), "0.8.0");
+        assert_eq!(label(&publik(v("0.3.0-rc.1"), Some(1))), "0.3.0-rc.1");
+        assert_eq!(label(&v("0.2.0+abc")), "0.2.0+abc");
     }
 }

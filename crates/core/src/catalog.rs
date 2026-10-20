@@ -60,6 +60,22 @@ impl CraftApp {
     pub fn by_id(id: &str) -> Option<&'static CraftApp> {
         SUITE.iter().find(|a| a.id == id)
     }
+
+    /// publik's fork of the app, where publik's own builds are released: `Blueturboguy07/<repo>`.
+    pub fn publik_repo(&self) -> String {
+        format!("{PUBLIK_OWNER}/{}", self.repo_name())
+    }
+
+    /// The macOS bundle id of publik's build: `com.publik.<repo>` without dashes
+    /// (`com.publik.gridcraft`, `com.publik.craftlauncher`).
+    pub fn publik_bundle_id(&self) -> String {
+        format!("com.publik.{}", self.repo_name().replace('-', ""))
+    }
+
+    /// The repository's name without its owner (`craft-launcher`).
+    fn repo_name(&self) -> &'static str {
+        self.repo.rsplit('/').next().unwrap_or(self.id)
+    }
 }
 
 const fn app(
@@ -149,11 +165,15 @@ pub const SUITE: [CraftApp; 13] = [
 
 /// ArtCraft's website.
 pub const WEBSITE_URL: &str = "https://getartcraft.com";
-/// The GitHub account every Craft App's repository lives under: the only one the launcher
-/// installs from, whatever the release feed says.
+/// The GitHub account every Craft App's repository lives under: the only one the release feed
+/// can send the launcher to, whatever it says. publik's own builds come from [`PUBLIK_OWNER`].
 pub const GITHUB_OWNER: &str = "storytold";
 /// ArtCraft on GitHub: every Craft App's source.
 pub const GITHUB_URL: &str = "https://github.com/storytold";
+/// publik's GitHub account. publik builds, signs and releases its own copy of each Craft App
+/// from a fork with the same name, tagged `v<version>-publik.<n>`. The launcher prefers such a
+/// build when there is one for this computer, and uses ArtCraft's release when there is none.
+pub const PUBLIK_OWNER: &str = "Blueturboguy07";
 /// ArtCraft's social accounts: (service, URL). Shown as small icons, less prominent than Discord.
 pub const SOCIAL: [(&str, &str); 5] = [
     ("X", "https://x.com/get_artcraft"),
@@ -199,6 +219,16 @@ mod tests {
             assert_eq!(a.repo, format!("storytold/{}", a.id));
             assert_eq!(a.name.to_lowercase(), a.id);
         }
+    }
+
+    #[test]
+    fn publik_forks_and_bundle_ids_follow_the_repo_names() {
+        for a in &SUITE {
+            assert_eq!(a.publik_repo(), format!("Blueturboguy07/{}", a.id));
+            assert_eq!(a.publik_bundle_id(), format!("com.publik.{}", a.id));
+        }
+        assert_eq!(LAUNCHER.publik_repo(), "Blueturboguy07/craft-launcher");
+        assert_eq!(LAUNCHER.publik_bundle_id(), "com.publik.craftlauncher");
     }
 
     #[test]

@@ -37,7 +37,7 @@ pub struct Release {
 
 impl Release {
     pub fn version_label(&self) -> String {
-        self.version.as_ref().map_or_else(|| self.tag.clone(), ToString::to_string)
+        self.version.as_ref().map_or_else(|| self.tag.clone(), version::label)
     }
 
     /// Fills in checksums from a `SHA256SUMS.txt` for assets that don't have one.
@@ -51,6 +51,12 @@ impl Release {
 
     pub fn sums_asset(&self) -> Option<&Asset> {
         self.assets.iter().find(|a| a.name == "SHA256SUMS.txt")
+    }
+
+    /// Whether this is publik's own build ([`publik_tag`]): it installs from publik's fork and
+    /// carries publik's signature.
+    pub fn is_publik(&self) -> bool {
+        self.version.as_ref().is_some_and(version::is_publik)
     }
 }
 
@@ -96,6 +102,45 @@ pub fn parse_github_release_list(json: &str, repo: &str, allow_prerelease: bool)
         }
         let newer = best.as_ref().and_then(|b| b.version.as_ref()).is_none_or(|b| version::is_newer(ver, b));
         if newer {
+            best = Some(r);
+        }
+    }
+    Ok(best)
+}
+
+/// Reads the tag of a publik build: `v0.8.0-publik.1` is publik's build 1 of version 0.8.0,
+/// returned as `0.8.0+publik.1`. `None` for every other tag.
+pub fn publik_tag(tag: &str) -> Option<Version> {
+    let (base, n) = tag.rsplit_once("-publik.")?;
+    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let base = version::parse(base).filter(|v| v.build.is_empty())?;
+    Some(version::publik(base, Some(n.parse().ok()?)))
+}
+
+/// Reads `GET /repos/<fork>/releases` of publik's fork and returns publik's newest build: of the
+/// releases tagged `…-publik.<n>`, the highest version, and of those the highest `n`. Drafts
+/// never count; pre-releases (GitHub's flag or a pre-release version) only with
+/// `allow_prerelease`. Downloads must be the fork's own, and the version carries publik's mark.
+pub fn parse_publik_release_list(json: &str, repo: &str, allow_prerelease: bool) -> Result<Option<Release>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("unreadable answer from GitHub ({e})"))?;
+    let list = v.as_array().ok_or("unexpected answer from GitHub")?;
+    let mut best: Option<Release> = None;
+    for item in list {
+        if item["draft"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        let Ok(mut r) = release_from_value(item, repo) else { continue };
+        let Some(ver) = publik_tag(&r.tag) else { continue };
+        if !allow_prerelease && (r.prerelease || !version::is_stable(&ver)) {
+            continue;
+        }
+        let newer = best.as_ref().and_then(|b| b.version.as_ref()).is_none_or(|b| {
+            version::compare(&ver, b).then_with(|| version::publik_number(&ver).cmp(&version::publik_number(b))) == std::cmp::Ordering::Greater
+        });
+        if newer {
+            r.version = Some(ver);
             best = Some(r);
         }
     }
@@ -266,6 +311,71 @@ mod tests {
         assert_eq!(parse_github_release_list(json, REPO, false).unwrap().unwrap().tag, "v0.5.0");
         assert_eq!(parse_github_release_list(json, REPO, true).unwrap().unwrap().tag, "v0.6.0-rc.1");
         assert_eq!(parse_github_release_list("[]", REPO, false).unwrap(), None);
+    }
+
+    const FORK: &str = "Blueturboguy07/gridcraft";
+
+    /// One element of `GET /repos/Blueturboguy07/gridcraft/releases`, as the founder's release
+    /// script publishes it (a universal dmg, the CLI zip and `SHA256SUMS.txt`), abridged.
+    fn fork_release(tag: &str, prerelease: bool, draft: bool) -> String {
+        let ver = tag.trim_start_matches('v').split("-publik.").next().unwrap_or_default();
+        let dl = format!("https://github.com/{FORK}/releases/download/{tag}");
+        format!(
+            r#"{{"tag_name":"{tag}","name":"GridCraft {ver} (publik build)","draft":{draft},"prerelease":{prerelease},
+            "html_url":"https://github.com/{FORK}/releases/tag/{tag}","published_at":"2026-10-19T20:00:00Z","body":"Notes",
+            "assets":[
+              {{"name":"gridcraft-{ver}-macos-universal.dmg","size":9,"browser_download_url":"{dl}/gridcraft-{ver}-macos-universal.dmg"}},
+              {{"name":"gridcraft-cli-{ver}-macos-universal.zip","size":5,"browser_download_url":"{dl}/gridcraft-cli-{ver}-macos-universal.zip"}},
+              {{"name":"SHA256SUMS.txt","size":2,"browser_download_url":"{dl}/SHA256SUMS.txt"}},
+              {{"name":"gridcraft-{ver}-windows-x64.msi","size":1,"browser_download_url":"https://github.com/storytold/gridcraft/releases/download/v{ver}/x.msi"}}]}}"#
+        )
+    }
+
+    fn fork_list(releases: &[(&str, bool, bool)]) -> String {
+        format!("[{}]", releases.iter().map(|(t, p, d)| fork_release(t, *p, *d)).collect::<Vec<_>>().join(","))
+    }
+
+    #[test]
+    fn publik_tags_are_read_and_others_are_not() {
+        let tag = |t: &str| publik_tag(t).map(|v| v.to_string());
+        assert_eq!(tag("v0.8.0-publik.1").as_deref(), Some("0.8.0+publik.1"));
+        assert_eq!(tag("0.8.0-publik.12").as_deref(), Some("0.8.0+publik.12"));
+        assert_eq!(tag("v0.3.0-rc.1-publik.2").as_deref(), Some("0.3.0-rc.1+publik.2"));
+        for other in ["v0.8.0", "v0.8.0-rc.1", "v0.8.0-publik", "v0.8.0-publik.", "v0.8.0-publik.x", "v0.8.0-publik.1.2", "v0.8.0-Publik.1", "publik.1", "-publik.1"] {
+            assert_eq!(publik_tag(other), None, "{other}");
+        }
+    }
+
+    #[test]
+    fn publik_list_picks_the_newest_publik_build() {
+        let json = fork_list(&[
+            ("v0.9.0", false, false),               // not a publik build
+            ("v0.9.0-publik.1", false, true),       // a draft
+            ("v0.8.1-publik.1", true, false),       // flagged pre-release on GitHub
+            ("v0.9.0-rc.1-publik.1", false, false), // a pre-release version
+            ("v0.7.0-publik.5", false, false),
+            ("v0.8.0-publik.1", false, false),
+            ("v0.8.0-publik.2", false, false),
+        ]);
+        let r = parse_publik_release_list(&json, FORK, false).unwrap().unwrap();
+        assert_eq!(r.tag, "v0.8.0-publik.2");
+        assert_eq!(r.version.as_ref().map(ToString::to_string).as_deref(), Some("0.8.0+publik.2"));
+        assert_eq!(r.version_label(), "0.8.0");
+        assert!(r.is_publik());
+        assert_eq!(r.html_url, "https://github.com/Blueturboguy07/gridcraft/releases/tag/v0.8.0-publik.2");
+        // Only the fork's own downloads are kept, and the checksums come from its SHA256SUMS.txt.
+        assert!(r.assets.iter().all(|a| a.url.starts_with("https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.2/")));
+        assert_eq!(r.assets.len(), 3);
+        assert_eq!(r.sums_asset().map(|a| a.url.as_str()), Some("https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.2/SHA256SUMS.txt"));
+        // With pre-releases on, the newest of all.
+        assert_eq!(parse_publik_release_list(&json, FORK, true).unwrap().unwrap().tag, "v0.9.0-rc.1-publik.1");
+        // A fork with no publik build has nothing to offer, whatever else it holds.
+        assert_eq!(parse_publik_release_list(&fork_list(&[("v0.9.0", false, false)]), FORK, false).unwrap(), None);
+        assert_eq!(parse_publik_release_list("[]", FORK, false).unwrap(), None);
+        assert!(parse_publik_release_list(r#"{"message":"Not Found"}"#, FORK, false).is_err());
+        // ArtCraft's own releases are never marked as publik's.
+        let upstream = parse_github_release_list(r#"[{"tag_name":"v0.5.0","draft":false,"assets":[]}]"#, REPO, false).unwrap().unwrap();
+        assert!(!upstream.is_publik());
     }
 
     #[test]
