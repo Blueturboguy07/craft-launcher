@@ -101,7 +101,8 @@ fn detect(exe: &Path) -> Option<Install> {
     let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app"))?;
     let plist = plist::Value::from_file(bundle.join("Contents/Info.plist")).ok()?;
     let id = plist.as_dictionary()?.get("CFBundleIdentifier")?.as_string()?;
-    (id == LAUNCHER.bundle_id()).then(|| Install::MacApp(bundle.to_path_buf()))
+    // ArtCraft's build or publik's (`com.publik.craftlauncher`).
+    (id == LAUNCHER.bundle_id() || id == LAUNCHER.publik_bundle_id()).then(|| Install::MacApp(bundle.to_path_buf()))
 }
 
 #[cfg(windows)]

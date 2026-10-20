@@ -153,11 +153,13 @@ impl NativeBackend {
         let feed = if pre { None } else { load_feed(&self.paths) };
         let now = crate::now();
         for app in &SUITE {
-            let answer = match feed.as_ref().map(|f| f.answer(app, now)) {
+            // publik's own build first, when one was saved.
+            let publik = self.source.as_ref().and_then(|s| saved_publik_build(app, s.as_ref(), self.platform, pre));
+            let answer = publik.map(|r| (LatestRelease::Found(r), Origin::GitHub)).or_else(|| match feed.as_ref().map(|f| f.answer(app, now)) {
                 Some(FeedAnswer::Fresh(Some(r))) => Some((LatestRelease::Found(r), Origin::ArtCraftApi)),
                 Some(FeedAnswer::Fresh(None)) => Some((LatestRelease::None, Origin::ArtCraftApi)),
                 _ => self.source.as_ref().and_then(|s| s.cached(&feed_repo(feed.as_ref(), app), pre)).map(|l| (l, Origin::GitHub)),
-            };
+            });
             if let Some((latest, from)) = answer {
                 if let LatestRelease::Found(r) = &latest {
                     self.shared.latest.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string(), r.clone());
@@ -255,7 +257,8 @@ impl NativeBackend {
                             let Some(app) = queue.lock().unwrap_or_else(PoisonError::into_inner).pop() else { break };
                             let (latest, from, used) = match &mirror {
                                 Some(_) => mirror_latest(app, feed.as_ref(), now),
-                                None => latest_for(app, feed.as_ref(), fallback, source.as_ref(), &shared, pre, force, now),
+                                None => publik_latest(app, source.as_ref(), &shared, platform, fallback.github_every, pre, force, now)
+                                    .unwrap_or_else(|| latest_for(app, feed.as_ref(), fallback, source.as_ref(), &shared, pre, force, now)),
                             };
                             if let Some(used) = used {
                                 sources.lock().unwrap_or_else(PoisonError::into_inner).push(used);
@@ -753,6 +756,60 @@ fn latest_for(
     } else {
         (source.cached(&repo, pre), Origin::GitHub, None)
     }
+}
+
+/// publik's own build of `app` (the launcher included), when publik's fork has one for this
+/// platform: the newest release tagged `…-publik.<n>` on `Blueturboguy07/<repo>`. The fork is
+/// asked as often as GitHub is for the fallback (`every` seconds per app, unless `force`);
+/// between times, and while GitHub doesn't answer, the saved answer stands. `None` when the fork
+/// has no such build, has none for this platform, or can't be asked and nothing is saved: then
+/// ArtCraft's own release decides, as before.
+#[allow(clippy::too_many_arguments)]
+fn publik_latest(
+    app: &CraftApp,
+    source: &dyn ReleaseSource,
+    shared: &Shared,
+    platform: Option<Platform>,
+    every: i64,
+    pre: bool,
+    force: bool,
+    now: i64,
+) -> Option<(Option<LatestRelease>, Origin, Option<Source>)> {
+    let platform = platform?;
+    let repo = app.publik_repo();
+    let due = {
+        let key = format!("publik:{}", app.id);
+        let mut asked = shared.github_asked.lock().unwrap_or_else(PoisonError::into_inner);
+        let due = force || asked.get(&key).is_none_or(|t| now - t >= every);
+        if due {
+            asked.insert(key, now);
+        }
+        due
+    };
+    let (latest, used) = if due {
+        let answer = source.publik(&repo, pre);
+        (Some(answer.latest), Some(answer.source))
+    } else {
+        (source.cached(&repo, pre), None)
+    };
+    match latest {
+        Some(LatestRelease::Found(r)) if has_download(app, &r, platform) => Some((Some(LatestRelease::Found(r)), Origin::GitHub, used)),
+        _ => None,
+    }
+}
+
+/// publik's build of `app` as last saved, when it has something for `platform`.
+fn saved_publik_build(app: &CraftApp, source: &dyn ReleaseSource, platform: Option<Platform>, pre: bool) -> Option<Release> {
+    match source.cached(&app.publik_repo(), pre)? {
+        LatestRelease::Found(r) if platform.is_some_and(|p| has_download(app, &r, p)) => Some(r),
+        _ => None,
+    }
+}
+
+/// Whether `release` has a file of `app` that this platform can install.
+fn has_download(app: &CraftApp, release: &Release, platform: Platform) -> bool {
+    let stems: Vec<&str> = app.stems().collect();
+    pick_asset(release, &stems, platform, platform.download_kinds()).is_some()
 }
 
 /// Until when the footer says GitHub's limit holds details back: only while it does, that is
@@ -1524,5 +1581,136 @@ mod tests {
             assert_eq!(claim.join().unwrap(), Err(CANCELLED.to_string()));
         });
         assert!(!restarting.load(Ordering::SeqCst));
+    }
+
+    /// GitHub with publik's forks: `publik` answers from `forks` (by fork repo), `latest` has
+    /// ArtCraft's 0.7.0 for every repo. Both note what they were asked.
+    #[derive(Default)]
+    struct Forked {
+        forks: HashMap<String, LatestRelease>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl ReleaseSource for Forked {
+        fn latest(&self, repo: &str, _pre: bool) -> Answer {
+            self.asked.lock().unwrap().push(repo.to_string());
+            let r = artcraft_launcher_core::release::release_from_sums(repo, "v0.7.0", &[]);
+            Answer { latest: LatestRelease::Found(r), source: Source::GitHubApi }
+        }
+        fn publik(&self, repo: &str, _pre: bool) -> Answer {
+            self.asked.lock().unwrap().push(format!("publik {repo}"));
+            Answer { latest: self.forks.get(repo).cloned().unwrap_or(LatestRelease::None), source: Source::GitHubApi }
+        }
+        fn cached(&self, _repo: &str, _pre: bool) -> Option<LatestRelease> {
+            None
+        }
+        fn rate_limited_until(&self) -> Option<i64> {
+            None
+        }
+        fn save(&self) {}
+    }
+
+    /// A publik build in `fork` with these files, as the founder's release script publishes it.
+    fn publik_build(fork: &str, tag: &str, files: &[&str]) -> LatestRelease {
+        const HASH: &str = "8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1";
+        let sums: Vec<(String, String)> = files.iter().map(|f| (HASH.to_string(), (*f).to_string())).collect();
+        let mut r = artcraft_launcher_core::release::release_from_sums(fork, tag, &sums);
+        r.version = artcraft_launcher_core::release::publik_tag(tag);
+        LatestRelease::Found(r)
+    }
+
+    const MAC: Platform = Platform { os: Os::MacOs, arch: Arch::Arm64 };
+    const HOUR: i64 = 3600;
+
+    #[test]
+    fn a_publik_build_comes_first_and_artcraft_is_the_fallback() {
+        let forks = HashMap::from([
+            (
+                "Blueturboguy07/gridcraft".to_string(),
+                publik_build(
+                    "Blueturboguy07/gridcraft",
+                    "v0.8.0-publik.1",
+                    &["gridcraft-0.8.0-macos-universal.dmg", "gridcraft-cli-0.8.0-macos-universal.zip"],
+                ),
+            ),
+            ("Blueturboguy07/wordcraft".to_string(), LatestRelease::Failed("offline".into())),
+        ]);
+        let source = Forked { forks, ..Default::default() };
+        let shared = shared();
+        let grid = CraftApp::by_id("gridcraft").unwrap();
+        // GridCraft: publik's build, from publik's fork, with its checksums.
+        let Some((Some(LatestRelease::Found(r)), Origin::GitHub, Some(Source::GitHubApi))) =
+            publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW)
+        else {
+            panic!("no publik build")
+        };
+        assert_eq!(r.tag, "v0.8.0-publik.1");
+        assert!(r.is_publik() && r.version_label() == "0.8.0");
+        let (asset, kind) = planned_asset(grid, &r, MAC, &BackendOptions::default(), None, None).unwrap();
+        assert_eq!(kind, PackageKind::Dmg);
+        assert_eq!(asset.url, "https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.1/gridcraft-0.8.0-macos-universal.dmg");
+        assert!(asset.sha256.is_some());
+        assert_eq!(r.sums_asset().unwrap().url, "https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.1/SHA256SUMS.txt");
+        // publik's build has nothing for Windows: ArtCraft's release decides there.
+        assert_eq!(publik_latest(grid, &source, &shared, Some(Platform { os: Os::Windows, arch: Arch::X64 }), HOUR, false, true, NOW), None);
+        // PhotoCraft's fork has no publik build, and WordCraft's couldn't be asked: both fall back
+        // to ArtCraft's release, from the feed or from storytold on GitHub, as before.
+        let photo = CraftApp::by_id("photocraft").unwrap();
+        assert_eq!(publik_latest(photo, &source, &shared, Some(MAC), HOUR, false, false, NOW), None);
+        let (Some(LatestRelease::Found(r)), Origin::ArtCraftApi, _) = latest_for(photo, Some(&feed()), LOADED, &source, &shared, false, false, NOW)
+        else {
+            panic!("no fallback")
+        };
+        assert_eq!(r.tag, "v0.6.0");
+        let word = CraftApp::by_id("wordcraft").unwrap();
+        assert_eq!(publik_latest(word, &source, &shared, Some(MAC), HOUR, false, false, NOW), None);
+        let (Some(LatestRelease::Found(r)), Origin::GitHub, _) = latest_for(word, Some(&feed()), LOADED, &source, &shared, false, false, NOW) else {
+            panic!("no fallback")
+        };
+        assert_eq!(r.html_url, "https://github.com/storytold/wordcraft/releases/tag/v0.7.0");
+        assert!(!r.is_publik());
+        // The forks are asked as rarely as GitHub is for the fallback.
+        let asked = |repo: &str| source.asked.lock().unwrap().iter().filter(|a| *a == repo).count();
+        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 2, "once, and once more when forced");
+        assert!(publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW + 60).is_none(), "nothing saved to show");
+        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 2);
+        assert!(publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW + HOUR).is_some());
+        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 3);
+    }
+
+    #[test]
+    fn the_launcher_updates_itself_from_publiks_fork_first() {
+        let fork = "Blueturboguy07/craft-launcher";
+        let source = Forked {
+            forks: HashMap::from([(fork.to_string(), publik_build(fork, "v9.0.0-publik.1", &["artcraft-launcher-9.0.0-macos-universal.dmg"]))]),
+            ..Default::default()
+        };
+        let Some((Some(LatestRelease::Found(r)), ..)) = publik_latest(&LAUNCHER, &source, &shared(), Some(MAC), HOUR, false, false, NOW) else {
+            panic!("no publik build of the launcher")
+        };
+        assert_eq!(source.asked.lock().unwrap().as_slice(), [format!("publik {fork}")]);
+        assert!(r.is_publik() && r.html_url.starts_with("https://github.com/Blueturboguy07/craft-launcher/"));
+        let current = crate::self_update::current_version().unwrap();
+        assert!(version::is_newer(r.version.as_ref().unwrap(), &current));
+        // The same version as this one, rebuilt by publik, is not an update.
+        let same = format!("v{current}-publik.3");
+        let rebuilt = artcraft_launcher_core::release::publik_tag(&same).unwrap();
+        assert!(!version::is_newer(&rebuilt, &current));
+        // No publik build of the launcher: ArtCraft's launcher repo, as before.
+        let none = Forked::default();
+        assert_eq!(publik_latest(&LAUNCHER, &none, &shared(), Some(MAC), HOUR, false, false, NOW), None);
+        let (Some(LatestRelease::Found(r)), ..) = latest_for(&LAUNCHER, None, LOADED, &none, &shared(), false, false, NOW) else { panic!() };
+        assert!(r.html_url.starts_with("https://github.com/storytold/craft-launcher/"));
+    }
+
+    #[test]
+    fn a_publik_build_signs_with_publiks_team() {
+        let LatestRelease::Found(r) = publik_build("Blueturboguy07/gridcraft", "v0.8.0-publik.1", &[]) else { panic!() };
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(install::macos::Expect::release(&r).team, Some(install::macos::PUBLIK_TEAM_ID));
+            assert_eq!(install::macos::Expect::release(&release("0.5.0")).team, Some(install::macos::TEAM_ID));
+        }
+        assert!(r.is_publik());
     }
 }

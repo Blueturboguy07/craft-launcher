@@ -1133,6 +1133,8 @@ pub mod macos {
     /// The Apple Developer team that signs every Craft App and ArtCraft Launcher (Learning
     /// Machines LLC): the macOS side of the Windows publisher check.
     pub const TEAM_ID: &str = "DJ6XS33FX8";
+    /// publik's Apple Developer team, which signs publik's own builds (`Release::is_publik`).
+    pub const PUBLIK_TEAM_ID: &str = "R5R3ZS54LV";
 
     /// What a new copy must prove before it replaces anything. The checksum shows the download is
     /// the file the release lists; these show the app inside is the one the release promises.
@@ -1146,7 +1148,8 @@ pub mod macos {
 
     impl<'a> Expect<'a> {
         pub fn release(release: &'a Release) -> Self {
-            Self { team: Some(TEAM_ID), version: release.version.as_ref() }
+            let team = if release.is_publik() { PUBLIK_TEAM_ID } else { TEAM_ID };
+            Self { team: Some(team), version: release.version.as_ref() }
         }
     }
 

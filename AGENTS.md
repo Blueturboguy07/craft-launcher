@@ -62,6 +62,13 @@ settings file must produce an error the user can act on, never a panic. Shared s
   `cargo xtask local`); keep it loopback-only and behind the `local-mirror` cargo feature, which
   release builds never enable.
 - Verify each download against the release's `SHA256SUMS.txt` before running or installing it.
+- **publik's fork** (this repo's `publik-api` branch, `Blueturboguy07/craft-launcher`) also
+  installs publik's own builds: the newest release tagged `v<version>-publik.<n>` on
+  `Blueturboguy07/<repo>` (`catalog::PUBLIK_OWNER`, `release::parse_publik_release_list`), when
+  it has a file for this computer; otherwise the app's `storytold/` release, as before. Its
+  downloads are checked against its own `SHA256SUMS.txt`, and on macOS the app inside must be
+  signed by publik's Developer ID team (`R5R3ZS54LV`). Detection counts publik's bundle id
+  (`com.publik.<repo>`) as the same app, and the UI marks such a copy "publik build".
 - The details drawer's pictures are the one other download: JPEGs only, from a pinned tag of
   `https://raw.githubusercontent.com/storytold/craft-launcher-assets/` (`core::details`),
   capped at 2 MB each, cached, and never run. Pictures are not bundled in this repo.

@@ -1,6 +1,7 @@
 //! Finding Craft Apps that are already installed, however they got there.
 //!
-//! - macOS: `<App>.app` in `/Applications` or `~/Applications`, read from its `Info.plist`.
+//! - macOS: `<App>.app` in `/Applications` or `~/Applications`, read from its `Info.plist`
+//!   (ArtCraft's build, or publik's with bundle id `com.publik.<app>`).
 //! - Windows: the Windows Installer's uninstall entries (`Learning Machines LLC`), and portable
 //!   copies the launcher unpacked.
 //! - Linux: AppImages in `~/Applications` (where the launcher and AppImageLauncher put them),
@@ -157,11 +158,15 @@ pub mod macos {
         candidates(app).iter().find_map(|p| read_bundle(app, p))
     }
 
-    /// Reads a bundle's `Info.plist`; `None` unless it's really this app.
+    /// Reads a bundle's `Info.plist`; `None` unless it's really this app: ArtCraft's build
+    /// (`ai.storyteller.<app>`) or publik's (`com.publik.<app>`, whose version is marked
+    /// `+publik`).
     pub fn read_bundle(app: &CraftApp, path: &Path) -> Option<Installed> {
         let plist = plist::Value::from_file(path.join("Contents/Info.plist")).ok()?;
         let dict = plist.as_dictionary()?;
-        if dict.get("CFBundleIdentifier")?.as_string()? != app.bundle_id() {
+        let id = dict.get("CFBundleIdentifier")?.as_string()?;
+        let publik = id == app.publik_bundle_id();
+        if id != app.bundle_id() && !publik {
             return None;
         }
         // `<App>Version` carries the full version including a pre-release suffix;
@@ -169,7 +174,8 @@ pub mod macos {
         let full_key = format!("{}Version", app.name);
         let text =
             [full_key.as_str(), "CFBundleShortVersionString", "CFBundleVersion"].iter().find_map(|k| dict.get(k).and_then(plist::Value::as_string));
-        Some(Installed { version: text.and_then(version::parse), source: InstallSource::MacApp, location: path.display().to_string(), package: None })
+        let version = text.and_then(version::parse).map(|v| if publik { version::publik(v, None) } else { v });
+        Some(Installed { version, source: InstallSource::MacApp, location: path.display().to_string(), package: None })
     }
 }
 
@@ -446,6 +452,42 @@ pub mod freebsd {
     fn binary_version(bin: &Path, app: &CraftApp) -> Option<version::Version> {
         let out = crate::process::capture(bin.to_str()?, &["--version"], Duration::from_secs(5))?;
         parse_cli_version(out.trim(), app)
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    /// A minimal `GridCraft.app` in `dir` with bundle id `id`, reporting 0.8.0.
+    fn bundle(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+        let app = dir.join(format!("{id}/GridCraft.app"));
+        std::fs::create_dir_all(app.join("Contents")).unwrap();
+        std::fs::write(
+            app.join("Contents/Info.plist"),
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+                 <key>CFBundleIdentifier</key><string>{id}</string>\
+                 <key>CFBundleShortVersionString</key><string>0.8.0</string></dict></plist>"
+            ),
+        )
+        .unwrap();
+        app
+    }
+
+    #[test]
+    fn publiks_build_is_this_app_too_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let grid = CraftApp::by_id("gridcraft").unwrap();
+        let artcraft = macos::read_bundle(grid, &bundle(dir.path(), "ai.storyteller.gridcraft")).unwrap();
+        assert_eq!(artcraft.version.map(|v| v.to_string()).as_deref(), Some("0.8.0"));
+        let publik = macos::read_bundle(grid, &bundle(dir.path(), "com.publik.gridcraft")).unwrap();
+        let v = publik.version.unwrap();
+        assert!(version::is_publik(&v) && version::label(&v) == "0.8.0");
+        // Anyone else's bundle, or another app's, is not GridCraft.
+        for other in ["com.example.gridcraft", "com.publik.wordcraft", "com.publik.gridcraft.evil"] {
+            assert!(macos::read_bundle(grid, &bundle(dir.path(), other)).is_none(), "{other}");
+        }
     }
 }
 
