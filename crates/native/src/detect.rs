@@ -455,7 +455,8 @@ pub mod freebsd {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
+#[cfg(target_os = "macos")]
 mod macos_tests {
     use super::*;
 

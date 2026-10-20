@@ -2,8 +2,8 @@
 
 use std::cmp::Ordering;
 
-pub use semver::Version;
 use semver::BuildMetadata;
+pub use semver::Version;
 
 /// The build metadata that marks publik's own build of an app: `0.8.0+publik.1` for release
 /// `v0.8.0-publik.1`, `0.8.0+publik` for an installed copy (its build number isn't recorded).

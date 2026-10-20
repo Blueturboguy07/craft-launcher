@@ -127,10 +127,8 @@ impl GitHubSource {
     /// latest release counts only when it is a publik build.
     fn ask_pages(&self, repo: &str, publik: bool) -> Result<Answer, String> {
         let location = self.http.redirect_target(&format!("https://github.com/{repo}/releases/latest"))?;
-        let Some(tag) = location
-            .as_deref()
-            .and_then(|l| release::tag_from_redirect(l, repo))
-            .filter(|tag| !publik || release::publik_tag(tag).is_some())
+        let Some(tag) =
+            location.as_deref().and_then(|l| release::tag_from_redirect(l, repo)).filter(|tag| !publik || release::publik_tag(tag).is_some())
         else {
             // No published release: github.com sends us to the release list instead.
             return Ok(Answer { latest: LatestRelease::None, source: Source::GitHubPages });

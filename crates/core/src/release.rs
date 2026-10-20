@@ -341,7 +341,17 @@ mod tests {
         assert_eq!(tag("v0.8.0-publik.1").as_deref(), Some("0.8.0+publik.1"));
         assert_eq!(tag("0.8.0-publik.12").as_deref(), Some("0.8.0+publik.12"));
         assert_eq!(tag("v0.3.0-rc.1-publik.2").as_deref(), Some("0.3.0-rc.1+publik.2"));
-        for other in ["v0.8.0", "v0.8.0-rc.1", "v0.8.0-publik", "v0.8.0-publik.", "v0.8.0-publik.x", "v0.8.0-publik.1.2", "v0.8.0-Publik.1", "publik.1", "-publik.1"] {
+        for other in [
+            "v0.8.0",
+            "v0.8.0-rc.1",
+            "v0.8.0-publik",
+            "v0.8.0-publik.",
+            "v0.8.0-publik.x",
+            "v0.8.0-publik.1.2",
+            "v0.8.0-Publik.1",
+            "publik.1",
+            "-publik.1",
+        ] {
             assert_eq!(publik_tag(other), None, "{other}");
         }
     }
@@ -366,7 +376,10 @@ mod tests {
         // Only the fork's own downloads are kept, and the checksums come from its SHA256SUMS.txt.
         assert!(r.assets.iter().all(|a| a.url.starts_with("https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.2/")));
         assert_eq!(r.assets.len(), 3);
-        assert_eq!(r.sums_asset().map(|a| a.url.as_str()), Some("https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.2/SHA256SUMS.txt"));
+        assert_eq!(
+            r.sums_asset().map(|a| a.url.as_str()),
+            Some("https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.2/SHA256SUMS.txt")
+        );
         // With pre-releases on, the newest of all.
         assert_eq!(parse_publik_release_list(&json, FORK, true).unwrap().unwrap().tag, "v0.9.0-rc.1-publik.1");
         // A fork with no publik build has nothing to offer, whatever else it holds.

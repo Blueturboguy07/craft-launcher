@@ -659,7 +659,8 @@ impl LauncherUi {
                                 // The version: what is installed, with an arrow to the new one in the app's colour
                                 // when an update waits; the latest for an app not installed yet.
                                 let (text, color) =
-                                    match (status == AppStatus::UpdateAvailable).then(|| entry.installed_label().zip(entry.latest_label())).flatten() {
+                                    match (status == AppStatus::UpdateAvailable).then(|| entry.installed_label().zip(entry.latest_label())).flatten()
+                                    {
                                         Some((from, to)) => (format!("{from} → {to}"), t.app_ink(entry.app)),
                                         None => match (entry.installed_label(), entry.latest_label()) {
                                             (Some(installed), _) => (installed, t.ink),
