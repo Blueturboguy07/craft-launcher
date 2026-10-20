@@ -658,22 +658,26 @@ impl LauncherUi {
                             row.col(|ui| {
                                 // The version: what is installed, with an arrow to the new one in the app's colour
                                 // when an update waits; the latest for an app not installed yet.
-                                let mut mono = |text: String, color| ui.label(RichText::new(text).family(egui::FontFamily::Monospace).color(color));
-                                match (status == AppStatus::UpdateAvailable).then(|| entry.installed_label().zip(entry.latest_label())).flatten() {
-                                    Some((from, to)) => {
-                                        mono(format!("{from} → {to}"), t.app_ink(entry.app));
-                                    }
-                                    None => match (entry.installed_label(), entry.latest_label()) {
-                                        (Some(installed), _) => {
-                                            mono(installed, t.ink);
-                                        }
-                                        (None, Some(latest)) => {
-                                            mono(latest, t.faint);
-                                        }
-                                        (None, None) => {
-                                            mono("—".into(), t.faint);
-                                        }
-                                    },
+                                let (text, color) =
+                                    match (status == AppStatus::UpdateAvailable).then(|| entry.installed_label().zip(entry.latest_label())).flatten() {
+                                        Some((from, to)) => (format!("{from} → {to}"), t.app_ink(entry.app)),
+                                        None => match (entry.installed_label(), entry.latest_label()) {
+                                            (Some(installed), _) => (installed, t.ink),
+                                            (None, Some(latest)) => (latest, t.faint),
+                                            (None, None) => ("—".into(), t.faint),
+                                        },
+                                    };
+                                let mono = RichText::new(text).family(egui::FontFamily::Monospace).color(color);
+                                if entry.publik_build(&status) {
+                                    // publik's own build says so on a second line.
+                                    let mono_font = FontId::new(egui::TextStyle::Body.resolve(ui.style()).size, egui::FontFamily::Monospace);
+                                    let mark_font = FontId::proportional(TAGLINE_SIZE);
+                                    centered_lines(ui, &[&mono_font, &mark_font], 2.0, |ui| {
+                                        ui.label(mono);
+                                        ui.label(RichText::new(tl!("publik build")).font(mark_font.clone()).color(t.muted));
+                                    });
+                                } else {
+                                    ui.label(mono);
                                 }
                             });
                             row.col(|ui| {
@@ -969,10 +973,15 @@ fn grid_sort_label((key, descending): (SortKey, bool)) -> &'static str {
     }
 }
 
-/// "0.4.1 installed → 0.5.0 released · Oct 8, 2026" and friends.
+/// "0.4.1 installed → 0.5.0 released · Oct 8, 2026" and friends, with "· publik build" after
+/// publik's own build.
 pub(crate) fn version_line(e: &AppEntry, status: &AppStatus) -> String {
+    model::mark_publik(version_text(e, status), e, status)
+}
+
+fn version_text(e: &AppEntry, status: &AppStatus) -> String {
     let released = e.release().and_then(|r| r.published_at).map(|at| format!(" · {}", date_text(at))).unwrap_or_default();
-    let inst_ver = e.installed.as_ref().and_then(|i| i.version.as_ref().map(ToString::to_string));
+    let inst_ver = e.installed.as_ref().and_then(|i| i.version.as_ref().map(artcraft_launcher_core::version::label));
     let latest = e.latest_label();
     match (status, inst_ver.as_deref(), latest.as_deref()) {
         (AppStatus::UpdateAvailable, Some(i), Some(l)) => {

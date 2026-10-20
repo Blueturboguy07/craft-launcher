@@ -4,7 +4,7 @@ use artcraft_launcher_core::platform::{Platform, pick_asset};
 use artcraft_launcher_core::protocol::{JobPhase, LatestRelease, PausedDownload};
 use artcraft_launcher_core::release::Release;
 use artcraft_launcher_core::status::{self, AppStatus, Latest};
-use artcraft_launcher_core::{CraftApp, Installed};
+use artcraft_launcher_core::{CraftApp, Installed, version};
 
 use crate::i18n::t;
 
@@ -57,7 +57,16 @@ impl AppEntry {
     }
 
     pub fn installed_label(&self) -> Option<String> {
-        self.installed.as_ref().map(|i| i.version.as_ref().map(ToString::to_string).unwrap_or_else(|| t("Installed").to_string()))
+        self.installed.as_ref().map(|i| i.version.as_ref().map(version::label).unwrap_or_else(|| t("Installed").to_string()))
+    }
+
+    /// Whether the version shown for this app is publik's own build: the latest release's when
+    /// nothing is installed or an update waits, else the installed copy's.
+    pub fn publik_build(&self, status: &AppStatus) -> bool {
+        match (&self.installed, status) {
+            (None, _) | (Some(_), AppStatus::UpdateAvailable) => self.release().is_some_and(Release::is_publik),
+            (Some(i), _) => i.version.as_ref().is_some_and(version::is_publik),
+        }
     }
 
     pub fn latest_label(&self) -> Option<String> {
@@ -70,6 +79,14 @@ impl AppEntry {
             _ => None,
         }
     }
+}
+
+/// `text` (a version) and "· publik build" when the version it shows is publik's own build.
+pub fn mark_publik(text: String, e: &AppEntry, status: &AppStatus) -> String {
+    if text.trim().is_empty() || !e.publik_build(status) {
+        return text;
+    }
+    format!("{text} · {}", t("publik build"))
 }
 
 /// The colour role of a status.

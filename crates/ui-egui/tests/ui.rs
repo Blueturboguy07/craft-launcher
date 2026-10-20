@@ -771,6 +771,64 @@ fn order(h: &Harness<'_, Option<LauncherUi>>) -> Vec<String> {
     names
 }
 
+/// publik's own build of `id` (tag `v<v>-publik.1` on publik's fork).
+fn publik_release(id: &str, v: &str) -> Release {
+    let mut r = release(id, v, NOW - 3600);
+    r.tag = format!("v{v}-publik.1");
+    r.version = artcraft_launcher_core::release::publik_tag(&r.tag);
+    r.html_url = format!("https://github.com/Blueturboguy07/{id}/releases/tag/{}", r.tag);
+    for a in &mut r.assets {
+        a.url = format!("https://github.com/Blueturboguy07/{id}/releases/download/{}/{}", r.tag, a.name);
+    }
+    r
+}
+
+#[test]
+fn publik_builds_are_marked_where_versions_are_listed() {
+    let installed = |v: Option<version::Version>, id: &str| Installed {
+        version: v,
+        source: InstallSource::MacApp,
+        location: format!("/Applications/{id}.app"),
+        package: None,
+    };
+    let found = |app: &str, r: Release| Event::Latest { app: app.into(), latest: LatestRelease::Found(r), from: Origin::GitHub };
+    let mut events = vec![
+        // Not installed; publik's build is the one on offer.
+        found("gridcraft", publik_release("gridcraft", "0.8.0")),
+        // ArtCraft's copy installed; publik's newer build is the update.
+        found("photocraft", publik_release("photocraft", "0.5.0")),
+        // publik's copy installed (bundle id com.publik.wordcraft), and current.
+        found("wordcraft", release("wordcraft", "0.3.0", NOW - 7200)),
+        // ArtCraft's release, not installed: no mark.
+        found("vectorcraft", release("vectorcraft", "0.7.0", NOW - 7200)),
+    ];
+    for app in &SUITE {
+        let inst = match app.id {
+            "photocraft" => Some(installed(version::parse("0.4.1"), app.name)),
+            "wordcraft" => Some(installed(version::parse("0.3.0").map(|v| version::publik(v, None)), app.name)),
+            _ => None,
+        };
+        events.push(Event::Detected { app: app.id.into(), installed: inst });
+    }
+    // The table: the version, and "publik build" under it for GridCraft, PhotoCraft and WordCraft.
+    let (mut h, _) = harness_with(events.clone(), ViewMode::Table, egui::Theme::Dark, true, 1.0);
+    h.run_steps(6);
+    for version in ["0.8.0", "0.4.1 → 0.5.0", "0.3.0", "0.7.0"] {
+        h.get_by_label(version);
+    }
+    assert_eq!(h.query_all_by_label("publik build").count(), 3);
+    // The buttons name the version only.
+    h.get_by_label("Update to 0.5.0");
+    snapshot(&mut h, "table-publik");
+    let (mut h, _) = harness_with(events, ViewMode::Grid, egui::Theme::Dark, true, 1.0);
+    h.run_steps(6);
+    h.get_by_label("v0.8.0 · publik build");
+    h.get_by_label("0.4.1 → 0.5.0 · publik build");
+    h.get_by_label("v0.3.0 · publik build");
+    h.get_by_label("v0.7.0");
+    snapshot(&mut h, "grid-publik");
+}
+
 #[test]
 fn every_table_column_sorts_both_ways() {
     let (mut h, _) = harness(ViewMode::Table, egui::Theme::Dark, true);
