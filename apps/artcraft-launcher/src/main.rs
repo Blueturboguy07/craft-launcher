@@ -43,7 +43,8 @@ fn main() -> ExitCode {
     artcraft_launcher_native::process::ensure_discord_detection_started();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("artcraft-launcher {}", env!("CARGO_PKG_VERSION"));
+        let v = artcraft_launcher_native::self_update::current_version().map_or_else(|| env!("CARGO_PKG_VERSION").to_string(), |v| v.to_string());
+        println!("artcraft-launcher {v}");
         return ExitCode::SUCCESS;
     }
     let mut hidden = args.iter().any(|a| a == login::HIDDEN_FLAG);
