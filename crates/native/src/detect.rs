@@ -61,7 +61,7 @@ fn from_manifest(app: &CraftApp, manifest: &Manifest) -> Option<Installed> {
     // On macOS the bundle itself is the truth (the app may have updated itself).
     #[cfg(target_os = "macos")]
     if rec.kind == artcraft_launcher_core::PackageKind::Dmg {
-        return macos::read_bundle(app, &rec.path);
+        return macos::read_bundle(app, &rec.path).map(|found| with_recorded_build(found, &rec.version));
     }
     Some(Installed {
         version: version::parse(&rec.version),
@@ -69,6 +69,23 @@ fn from_manifest(app: &CraftApp, manifest: &Manifest) -> Option<Installed> {
         location: rec.path.display().to_string(),
         package: None,
     })
+}
+
+/// A publik bundle reports its version without publik's build number (`0.8.0+publik`); the
+/// launcher's record of installing it has the number (`0.8.0+publik.2`). The record's number is
+/// taken only when the bundle is publik's and its version is the recorded one, so an update to
+/// a later build of the same version is offered once, and then not again.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn with_recorded_build(mut found: Installed, recorded: &str) -> Installed {
+    if let (Some(bundle), Some(record)) = (found.version.as_ref(), version::parse(recorded))
+        && version::is_publik(bundle)
+        && version::publik_number(bundle).is_none()
+        && version::publik_number(&record).is_some()
+        && version::compare(bundle, &record) == std::cmp::Ordering::Equal
+    {
+        found.version = Some(record);
+    }
+    found
 }
 
 /// Whether a file name is an AppImage of the app with asset stems `stems`, and the version its
@@ -490,6 +507,30 @@ mod macos_tests {
             assert!(macos::read_bundle(grid, &bundle(dir.path(), other)).is_none(), "{other}");
         }
     }
+
+    #[test]
+    fn a_publik_bundle_the_launcher_installed_knows_its_build_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let grid = CraftApp::by_id("gridcraft").unwrap();
+        let detected = |id: &str, recorded: &str| {
+            let record = crate::manifest::Record {
+                version: recorded.into(),
+                kind: artcraft_launcher_core::PackageKind::Dmg,
+                path: bundle(dir.path(), id),
+                installed_at: 1,
+                files: vec![],
+                needs_root: false,
+            };
+            let manifest = Manifest { apps: [("gridcraft".to_string(), record)].into() };
+            detect(grid, &manifest, &Snapshot::default()).and_then(|i| i.version).map(|v| v.to_string())
+        };
+        assert_eq!(detected("com.publik.gridcraft", "0.8.0+publik.2").as_deref(), Some("0.8.0+publik.2"));
+        // Recorded by an older launcher (no build number), or another version: the bundle decides.
+        assert_eq!(detected("com.publik.gridcraft", "0.8.0").as_deref(), Some("0.8.0+publik"));
+        assert_eq!(detected("com.publik.gridcraft", "0.7.0+publik.2").as_deref(), Some("0.8.0+publik"));
+        // ArtCraft's bundle never takes publik's number.
+        assert_eq!(detected("ai.storyteller.gridcraft", "0.8.0+publik.2").as_deref(), Some("0.8.0"));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -552,6 +593,18 @@ mod tests {
     use artcraft_launcher_core::SUITE;
 
     use super::*;
+
+    #[test]
+    fn a_recorded_publik_build_number_fills_in_only_for_the_same_publik_version() {
+        let copy = |v: &str| Installed { version: version::parse(v), source: InstallSource::MacApp, location: String::new(), package: None };
+        let with = |found: &str, recorded: &str| with_recorded_build(copy(found), recorded).version.map(|v| v.to_string());
+        assert_eq!(with("0.8.0+publik", "0.8.0+publik.2").as_deref(), Some("0.8.0+publik.2"));
+        assert_eq!(with("0.8.0+publik", "0.8.0").as_deref(), Some("0.8.0+publik"));
+        assert_eq!(with("0.8.0+publik", "0.8.1+publik.2").as_deref(), Some("0.8.0+publik"));
+        assert_eq!(with("0.8.0", "0.8.0+publik.2").as_deref(), Some("0.8.0"));
+        assert_eq!(with("0.8.0+publik.1", "0.8.0+publik.2").as_deref(), Some("0.8.0+publik.1"));
+        assert_eq!(with("0.8.0+publik", "garbage").as_deref(), Some("0.8.0+publik"));
+    }
 
     #[test]
     fn recognises_appimage_names_conservatively() {

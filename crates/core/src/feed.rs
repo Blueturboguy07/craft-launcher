@@ -1,13 +1,36 @@
-//! The release feed from storyteller-web: `GET https://api.storyteller.ai/v1/craft_apps/release_info`.
+//! publik's release feed: `GET https://publikhq.com/api/v1/craft/release_info`.
 //!
-//! storyteller-web polls GitHub for every Craft App on a schedule and serves the result, so the
-//! launcher doesn't have to (GitHub allows 60 unauthenticated requests an hour). GitHub stays the
-//! fallback: for apps the feed doesn't list, apps it hasn't fetched within [`MAX_AGE`], or when
-//! the feed doesn't answer.
+//! publik's server reads the releases of every fork (`Blueturboguy07/<app>`) on a schedule and
+//! serves them in one answer, so the launcher doesn't have to ask GitHub about each app (GitHub
+//! allows 60 unauthenticated requests an hour). The fork on GitHub stays the fallback: for apps
+//! the feed doesn't list, apps it hasn't fetched within [`MAX_AGE`], entries that aren't one of
+//! publik's builds, or when the feed doesn't answer.
+//!
+//! The answer has this shape (every field optional; the tests' `sample()` is a full example):
+//!
+//! ```text
+//! { "release_info": {
+//!     "apps": { "<app id>": {                       // `photocraft`…, `artcraft-launcher`
+//!         "repo": "Blueturboguy07/<repo>",          // must be the app's fork
+//!         "app_last_fetched": "<RFC 3339>",          // trusted for MAX_AGE after this
+//!         "latest_release": null | {
+//!           "tag": "v0.8.0-publik.2",                // must be `v<version>-publik.<n>`
+//!           "name", "published_at" (RFC 3339), "html_url", "prerelease", "notes_markdown",
+//!           "assets": [ { "name", "size_bytes",
+//!                         "download_url": "https://github.com/Blueturboguy07/<repo>/releases/download/…",
+//!                         "sha256": "<64 hex>" | null } ] } } },
+//!     "last_fetched": "<RFC 3339>" },
+//!   "app_renames": [], "repo_renames": [],
+//!   "important_notices": { "announcements": [], "alerts": [] } }
+//! ```
+//!
+//! Only publik's builds count: an entry whose tag isn't `v<version>-publik.<n>` is ignored, and a
+//! release's version carries publik's build number (`0.8.0+publik.2`). Fields the launcher doesn't
+//! read (`version`, an asset's `platform`) may be there too.
 //!
 //! The feed is input like any other: every field is optional, unknown fields are ignored, a field
 //! of the wrong type reads as missing, one bad entry never spoils the others, and download links
-//! must still point at the app's own GitHub releases.
+//! must still point at the app's own fork's GitHub releases.
 //!
 //! A developer can serve the feed and the builds from their own machine instead (see
 //! [`Feed::with_mirror`]): then links under the mirror are accepted too, and entries never go stale.
@@ -20,12 +43,11 @@ use serde::de::{DeserializeOwned, Deserializer};
 use crate::catalog::{CraftApp, GITHUB_OWNER};
 use crate::release::{self, Asset, Release};
 use crate::time::parse_rfc3339;
-use crate::version;
 
-/// Where the feed lives.
-pub const FEED_URL: &str = "https://api.storyteller.ai/v1/craft_apps/release_info";
+/// Where the feed lives: publik's server, never ArtCraft's.
+pub const FEED_URL: &str = "https://publikhq.com/api/v1/craft/release_info";
 
-/// An app's entry is trusted for this long after storyteller-web fetched it.
+/// An app's entry is trusted for this long after publik's server fetched it.
 pub const MAX_AGE: i64 = 24 * 3600;
 
 /// The feed, read leniently.
@@ -36,7 +58,8 @@ pub struct Feed {
     /// When the least recently fetched app was fetched (Unix seconds).
     pub last_fetched: Option<i64>,
     pub app_renames: Vec<AppRename>,
-    /// Repositories that moved, both under [`GITHUB_OWNER`]: a rename anywhere else is dropped.
+    /// Repositories that moved, both under [`GITHUB_OWNER`] (publik's account): a rename anywhere
+    /// else is dropped.
     pub repo_renames: Vec<RepoRename>,
     pub announcements: Vec<Notice>,
     pub alerts: Vec<Notice>,
@@ -50,7 +73,7 @@ pub struct FeedApp {
     pub repo: Option<String>,
     /// Present when the repo has a published release. Meaningless unless `fetched_at` is set.
     pub release: Option<FeedRelease>,
-    /// When storyteller-web last fetched this app (Unix seconds).
+    /// When publik's server last fetched this app (Unix seconds).
     pub fetched_at: Option<i64>,
 }
 
@@ -98,9 +121,10 @@ pub struct Notice {
 /// What the feed says about one app, once checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedAnswer {
-    /// Fresh: the app's latest release, or `None` when it has none.
+    /// Fresh: publik's latest build of the app, or `None` when there is none.
     Fresh(Option<Release>),
-    /// Not listed, never fetched, or older than [`MAX_AGE`]: ask GitHub.
+    /// Not listed, never fetched, older than [`MAX_AGE`], or not one of publik's builds: ask
+    /// GitHub (publik's fork).
     AskGitHub,
 }
 
@@ -142,7 +166,7 @@ impl Feed {
     }
 
     /// The repo to ask GitHub about for `app`, following the feed's repo renames. Always under
-    /// [`GITHUB_OWNER`]: the feed can move an app within ArtCraft's account, never out of it.
+    /// [`GITHUB_OWNER`]: the feed can move an app within publik's account, never out of it.
     pub fn repo_for(&self, app: &CraftApp) -> String {
         let mut repo = app.repo.to_string();
         // Follow a chain of moves (a → b → c), without looping forever.
@@ -182,10 +206,11 @@ impl Feed {
 }
 
 impl FeedRelease {
-    /// The release with only the downloads that belong to `repo` (or sit under `mirror`). `None`
-    /// when it doesn't hold up (no tag, or not a version).
+    /// The release with only the downloads that belong to `repo` (or sit under `mirror`), its
+    /// version marked as publik's build `n`. `None` when it isn't one of publik's builds (a tag
+    /// other than `v<version>-publik.<n>`).
     fn to_release(&self, repo: &str, mirror: Option<&str>) -> Option<Release> {
-        let version = version::parse(&self.tag)?;
+        let version = release::publik_tag(&self.tag)?;
         let prefix = release::download_prefix(repo);
         let allowed = |url: &str| url.starts_with(&prefix) || mirror.is_some_and(|m| url.starts_with(m) && !url.contains(".."));
         let releases_page = format!("https://github.com/{repo}/releases/");
@@ -435,11 +460,12 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::catalog::{CraftApp, LAUNCHER};
+    use crate::version;
 
     const NOW: i64 = 1_791_500_000; // 2026-10-09T…
     const HASH: &str = "8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1";
 
-    /// What storyteller-web serves (its `GetCraftAppsReleaseInfoResponse`), abridged.
+    /// What publik's route serves (`/api/v1/craft/release_info`), abridged.
     fn sample() -> String {
         format!(
             r#"{{
@@ -447,27 +473,50 @@ mod tests {
         "release_info": {{
           "apps": {{
             "photocraft": {{
-              "name": "PhotoCraft", "repo": "storytold/photocraft",
+              "name": "PhotoCraft", "repo": "Blueturboguy07/photocraft",
               "latest_release": {{
-                "tag": "v0.6.0", "version": "0.6.0", "name": "PhotoCraft v0.6.0",
+                "tag": "v0.6.0-publik.2", "version": "0.6.0", "name": "PhotoCraft 0.6.0 (publik build 2)",
                 "published_at": "2026-10-09T10:00:00Z",
-                "html_url": "https://github.com/storytold/photocraft/releases/tag/v0.6.0",
+                "html_url": "https://github.com/Blueturboguy07/photocraft/releases/tag/v0.6.0-publik.2",
                 "prerelease": false, "notes_markdown": "Notes",
                 "assets": [
                   {{ "name": "photocraft-0.6.0-macos-universal.dmg", "size_bytes": 123,
-                     "download_url": "https://github.com/storytold/photocraft/releases/download/v0.6.0/photocraft-0.6.0-macos-universal.dmg",
+                     "download_url": "https://github.com/Blueturboguy07/photocraft/releases/download/v0.6.0-publik.2/photocraft-0.6.0-macos-universal.dmg",
                      "sha256": "{HASH}", "platform": {{ "os": "macos", "arch": "universal", "package_type": "dmg" }} }},
-                  {{ "name": "evil.dmg", "size_bytes": 1, "download_url": "https://evil.example/evil.dmg", "sha256": null }}
+                  {{ "name": "evil.dmg", "size_bytes": 1, "download_url": "https://evil.example/evil.dmg", "sha256": null }},
+                  {{ "name": "photocraft-0.6.0-windows-x64.msi", "size_bytes": 1, "sha256": null,
+                     "download_url": "https://github.com/storytold/photocraft/releases/download/v0.6.0/photocraft-0.6.0-windows-x64.msi" }}
                 ]
               }},
               "app_last_fetched": "2026-10-09T13:00:00Z"
             }},
-            "soundcraft": {{ "name": "SoundCraft", "repo": "storytold/soundcraft", "latest_release": null,
+            "artcraft-launcher": {{
+              "name": "ArtCraft Launcher", "repo": "Blueturboguy07/craft-launcher",
+              "latest_release": {{
+                "tag": "v0.5.1-publik.2", "version": "0.5.1", "name": "ArtCraft Launcher 0.5.1 (publik build 2)",
+                "published_at": "2026-10-09T11:00:00Z",
+                "html_url": "https://github.com/Blueturboguy07/craft-launcher/releases/tag/v0.5.1-publik.2",
+                "prerelease": false, "notes_markdown": "",
+                "assets": [
+                  {{ "name": "artcraft-launcher-0.5.1-macos-universal.dmg", "size_bytes": 456,
+                     "download_url": "https://github.com/Blueturboguy07/craft-launcher/releases/download/v0.5.1-publik.2/artcraft-launcher-0.5.1-macos-universal.dmg",
+                     "sha256": "{HASH}", "platform": {{ "os": "macos", "arch": "universal", "package_type": "dmg" }} }}
+                ]
+              }},
+              "app_last_fetched": "2026-10-09T13:00:00Z"
+            }},
+            "soundcraft": {{ "name": "SoundCraft", "repo": "Blueturboguy07/soundcraft", "latest_release": null,
                              "app_last_fetched": "2026-10-09T13:00:00Z" }},
-            "filmcraft": {{ "name": "FilmCraft", "repo": "storytold/filmcraft", "latest_release": null, "app_last_fetched": null }},
-            "vectorcraft": {{ "repo": "storytold/vectorcraft", "app_last_fetched": "2026-10-01T00:00:00Z",
-                              "latest_release": {{ "tag": "v0.7.0" }} }},
-            "brandnewcraft": {{ "repo": "storytold/brandnewcraft", "app_last_fetched": "2026-10-09T13:00:00Z" }}
+            "filmcraft": {{ "name": "FilmCraft", "repo": "Blueturboguy07/filmcraft", "latest_release": null, "app_last_fetched": null }},
+            "vectorcraft": {{ "repo": "Blueturboguy07/vectorcraft", "app_last_fetched": "2026-10-01T00:00:00Z",
+                              "latest_release": {{ "tag": "v0.7.0-publik.1" }} }},
+            "deckcraft": {{ "repo": "Blueturboguy07/deckcraft", "app_last_fetched": "2026-10-09T13:00:00Z",
+                            "latest_release": {{ "tag": "v0.7.0" }} }},
+            "gridcraft": {{ "repo": "Blueturboguy07/gridcraft", "app_last_fetched": "2026-10-09T13:00:00Z",
+                            "latest_release": {{ "tag": "v0.7.0-publik.x" }} }},
+            "wordcraft": {{ "repo": "storytold/wordcraft", "app_last_fetched": "2026-10-09T13:00:00Z",
+                            "latest_release": {{ "tag": "v0.5.0-publik.1" }} }},
+            "brandnewcraft": {{ "repo": "Blueturboguy07/brandnewcraft", "app_last_fetched": "2026-10-09T13:00:00Z" }}
           }},
           "last_fetched": "2026-10-09T13:00:00Z",
           "some_future_field": {{ "whatever": [1, 2, 3] }}
@@ -484,21 +533,38 @@ mod tests {
     }
 
     #[test]
-    fn uses_fresh_entries_and_falls_back_for_everything_else() {
+    fn uses_fresh_publik_builds_and_falls_back_for_everything_else() {
+        assert_eq!(FEED_URL, "https://publikhq.com/api/v1/craft/release_info");
         let feed = Feed::parse(&sample()).unwrap();
-        // Fresh, with a release: only the download that belongs to the repo survives.
+        // Fresh, with a publik build: only the download from the fork survives.
         let FeedAnswer::Fresh(Some(r)) = feed.answer(app("photocraft"), NOW) else { panic!() };
+        assert_eq!(r.version, Some(version::publik(version::Version::new(0, 6, 0), Some(2))));
+        assert!(r.is_publik());
         assert_eq!(r.version_label(), "0.6.0");
+        assert_eq!(r.tag, "v0.6.0-publik.2");
         assert_eq!(r.assets.len(), 1);
+        assert!(r.assets[0].url.starts_with("https://github.com/Blueturboguy07/photocraft/releases/download/v0.6.0-publik.2/"));
         assert_eq!(r.assets[0].sha256.as_deref(), Some(HASH));
         assert_eq!(r.published_at, parse_rfc3339("2026-10-09T10:00:00Z"));
-        // Fresh, and no release yet.
+        assert_eq!(r.html_url, "https://github.com/Blueturboguy07/photocraft/releases/tag/v0.6.0-publik.2");
+        // The launcher's own entry.
+        let FeedAnswer::Fresh(Some(r)) = feed.answer(&LAUNCHER, NOW) else { panic!() };
+        assert_eq!(r.version.as_ref().map(ToString::to_string).as_deref(), Some("0.5.1+publik.2"));
+        assert_eq!(
+            r.assets[0].url,
+            "https://github.com/Blueturboguy07/craft-launcher/releases/download/v0.5.1-publik.2/artcraft-launcher-0.5.1-macos-universal.dmg"
+        );
+        // Fresh, and no publik build yet.
         assert_eq!(feed.answer(app("soundcraft"), NOW), FeedAnswer::Fresh(None));
         // Never fetched, more than a day old, or not listed: ask GitHub.
         assert_eq!(feed.answer(app("filmcraft"), NOW), FeedAnswer::AskGitHub);
         assert_eq!(feed.answer(app("vectorcraft"), NOW), FeedAnswer::AskGitHub);
+        assert_eq!(feed.answer(app("cadcraft"), NOW), FeedAnswer::AskGitHub);
+        // Not one of publik's builds (a plain tag, a broken build number), or ArtCraft's repo
+        // instead of publik's fork: ignored, so GitHub (the fork) decides.
+        assert_eq!(feed.answer(app("deckcraft"), NOW), FeedAnswer::AskGitHub);
+        assert_eq!(feed.answer(app("gridcraft"), NOW), FeedAnswer::AskGitHub);
         assert_eq!(feed.answer(app("wordcraft"), NOW), FeedAnswer::AskGitHub);
-        assert_eq!(feed.answer(&LAUNCHER, NOW), FeedAnswer::AskGitHub);
         // An app the launcher doesn't know is simply carried along.
         assert!(feed.apps.contains_key("brandnewcraft"));
     }
@@ -528,46 +594,52 @@ mod tests {
         let moved = sample()
             .replace(
                 "\"repo_renames\": []",
-                r#""repo_renames": [{"old_name": "Storytold/photocraft", "new_name": "storytold/photocraft-app", "renamed_at": null}]"#,
+                r#""repo_renames": [{"old_name": "blueturboguy07/photocraft", "new_name": "Blueturboguy07/photocraft-app", "renamed_at": null}]"#,
             )
             .replace(
-                "\"name\": \"PhotoCraft\", \"repo\": \"storytold/photocraft\"",
-                "\"name\": \"PhotoCraft\", \"repo\": \"storytold/photocraft-app\"",
+                "\"name\": \"PhotoCraft\", \"repo\": \"Blueturboguy07/photocraft\"",
+                "\"name\": \"PhotoCraft\", \"repo\": \"Blueturboguy07/photocraft-app\"",
             )
-            .replace("github.com/storytold/photocraft/releases", "github.com/storytold/photocraft-app/releases");
+            .replace("github.com/Blueturboguy07/photocraft/releases", "github.com/Blueturboguy07/photocraft-app/releases");
         let feed = Feed::parse(&moved).unwrap();
-        assert_eq!(feed.repo_for(app("photocraft")), "storytold/photocraft-app");
+        assert_eq!(feed.repo_for(app("photocraft")), "Blueturboguy07/photocraft-app");
         let FeedAnswer::Fresh(Some(r)) = feed.answer(app("photocraft"), NOW) else { panic!() };
-        assert!(r.assets[0].url.starts_with("https://github.com/storytold/photocraft-app/releases/download/"));
+        assert!(r.assets[0].url.starts_with("https://github.com/Blueturboguy07/photocraft-app/releases/download/"));
         // The same entry without the rename: the repo doesn't match, so GitHub decides.
-        let unannounced = moved.replace(r#"{"old_name": "Storytold/photocraft", "new_name": "storytold/photocraft-app", "renamed_at": null}"#, "");
+        let unannounced =
+            moved.replace(r#"{"old_name": "blueturboguy07/photocraft", "new_name": "Blueturboguy07/photocraft-app", "renamed_at": null}"#, "");
         let feed = Feed::parse(&unannounced).unwrap();
         assert_eq!(feed.answer(app("photocraft"), NOW), FeedAnswer::AskGitHub);
     }
 
     #[test]
-    fn a_rename_out_of_storytold_is_dropped() {
+    fn a_rename_out_of_publiks_account_is_dropped() {
         // Even a feed that vouches for the new repository, with matching links and checksums,
-        // can't send an app's downloads to another account (#90).
-        let moved = sample()
-            .replace(
-                "\"repo_renames\": []",
-                r#""repo_renames": [{"old_name": "storytold/photocraft", "new_name": "art/photocraft", "renamed_at": null},
-                                  {"old_name": "art/photocraft", "new_name": "storytold/photocraft", "renamed_at": null},
-                                  {"old_name": "storytold/photocraft", "new_name": "storytold.evil.example/photocraft", "renamed_at": null}]"#,
-            )
-            .replace("\"name\": \"PhotoCraft\", \"repo\": \"storytold/photocraft\"", "\"name\": \"PhotoCraft\", \"repo\": \"art/photocraft\"")
-            .replace("github.com/storytold/photocraft/releases", "github.com/art/photocraft/releases");
-        let feed = Feed::parse(&moved).unwrap();
-        assert!(feed.repo_renames.is_empty(), "{:?}", feed.repo_renames);
-        assert_eq!(feed.repo_for(app("photocraft")), "storytold/photocraft");
-        assert_eq!(feed.answer(app("photocraft"), NOW), FeedAnswer::AskGitHub);
+        // can't send an app's downloads to another account (#90), ArtCraft's included.
+        for (owner, wire) in [("storytold", "storytold/photocraft"), ("art", "art/photocraft")] {
+            let moved = sample()
+                .replace(
+                    "\"repo_renames\": []",
+                    &format!(
+                        r#""repo_renames": [{{"old_name": "Blueturboguy07/photocraft", "new_name": "{wire}", "renamed_at": null}},
+                                  {{"old_name": "{wire}", "new_name": "Blueturboguy07/photocraft", "renamed_at": null}},
+                                  {{"old_name": "Blueturboguy07/photocraft", "new_name": "Blueturboguy07.evil.example/photocraft", "renamed_at": null}}]"#
+                    ),
+                )
+                .replace("\"name\": \"PhotoCraft\", \"repo\": \"Blueturboguy07/photocraft\"", &format!("\"name\": \"PhotoCraft\", \"repo\": \"{wire}\""))
+                .replace("github.com/Blueturboguy07/photocraft/releases", &format!("github.com/{owner}/photocraft/releases"));
+            let feed = Feed::parse(&moved).unwrap();
+            assert!(feed.repo_renames.is_empty(), "{:?}", feed.repo_renames);
+            assert_eq!(feed.repo_for(app("photocraft")), "Blueturboguy07/photocraft");
+            assert_eq!(feed.answer(app("photocraft"), NOW), FeedAnswer::AskGitHub, "{owner}");
+        }
     }
 
     #[test]
     fn a_local_mirror_is_trusted_only_when_asked_for_and_never_goes_stale() {
         const MIRROR: &str = "http://127.0.0.1:8787/";
-        let local = sample().replace("https://github.com/storytold/photocraft/releases/download/v0.6.0/", "http://127.0.0.1:8787/photocraft/v0.6.0/");
+        let local = sample()
+            .replace("https://github.com/Blueturboguy07/photocraft/releases/download/v0.6.0-publik.2/", "http://127.0.0.1:8787/photocraft/v0.6.0/");
         // Without the mirror, the local link is dropped like any other stranger's.
         let FeedAnswer::Fresh(Some(r)) = Feed::parse(&local).unwrap().answer(app("photocraft"), NOW) else { panic!() };
         assert!(r.assets.is_empty());
@@ -577,6 +649,8 @@ mod tests {
         assert_eq!(r.assets[0].url, "http://127.0.0.1:8787/photocraft/v0.6.0/photocraft-0.6.0-macos-universal.dmg");
         // A week-old sync still counts.
         assert!(matches!(feed.answer(app("photocraft"), NOW + 7 * 86_400), FeedAnswer::Fresh(Some(_))));
+        // A mirror's entries are publik builds too: a plain tag isn't offered.
+        assert_eq!(feed.answer(app("deckcraft"), NOW), FeedAnswer::AskGitHub);
         // Escaping the mirror's folder isn't allowed, and a base without its trailing slash isn't a mirror.
         let escaping = local.replace("http://127.0.0.1:8787/photocraft/", "http://127.0.0.1:8787/../photocraft/");
         let FeedAnswer::Fresh(Some(r)) = Feed::parse(&escaping).unwrap().with_mirror(MIRROR).answer(app("photocraft"), NOW) else { panic!() };
@@ -584,18 +658,18 @@ mod tests {
         assert_eq!(Feed::default().with_mirror("http://127.0.0.1:8787").mirror, None);
     }
 
-    /// Contract check against what storyteller-web really serves: point `CRAFT_APPS_FEED_SAMPLE`
-    /// at a response it produced (its `live_round_fetches_real_releases` test writes one).
+    /// Contract check against what publik's route really serves: point `CRAFT_APPS_FEED_SAMPLE`
+    /// at a response saved from `https://publikhq.com/api/v1/craft/release_info`.
     #[test]
-    #[ignore = "needs a sample written by storyteller-web"]
-    fn reads_what_storyteller_web_serves() {
+    #[ignore = "needs a sample saved from publik's route"]
+    fn reads_what_publiks_route_serves() {
         let Ok(path) = std::env::var("CRAFT_APPS_FEED_SAMPLE") else { return };
         let json = std::fs::read_to_string(path).unwrap();
         let feed = Feed::parse(&json).unwrap();
         let now = feed.last_fetched.unwrap();
         for app in [app("photocraft"), &LAUNCHER] {
             let FeedAnswer::Fresh(Some(r)) = feed.answer(app, now) else { panic!("{} wasn't fresh", app.id) };
-            assert!(r.version.is_some(), "{}", app.id);
+            assert!(r.is_publik(), "{}", app.id);
             assert!(!r.assets.is_empty() && r.assets.iter().all(|a| a.sha256.is_some()), "{}", app.id);
             assert!(r.assets.iter().all(|a| a.url.starts_with(&format!("https://github.com/{}/releases/download/", app.repo))));
         }
@@ -611,7 +685,7 @@ mod tests {
             .replace(
                 "\"alerts\": []",
                 r#""alerts": [
-            {"title": "Security update", "body": "Update PdfCraft now.", "maybe_web_link": "https://getartcraft.com/security", "created_at": null},
+            {"title": "Security update", "body": "Update PdfCraft now.", "maybe_web_link": "https://publikhq.com/security", "created_at": null},
             {"title": "Bad link", "body": "x", "maybe_web_link": "javascript:alert(1)"}]"#,
             )
             .replace(
@@ -621,7 +695,7 @@ mod tests {
             );
         let feed = Feed::parse(&with_notices).unwrap();
         assert_eq!(feed.alerts.len(), 2);
-        assert_eq!(feed.alerts[0].link.as_deref(), Some("https://getartcraft.com/security"));
+        assert_eq!(feed.alerts[0].link.as_deref(), Some("https://publikhq.com/security"));
         assert_eq!(feed.alerts[1].link, None, "only web links are kept");
         let titles: Vec<&str> = feed.announcements.iter().map(|n| n.title.as_str()).collect();
         assert_eq!(titles, ["New: CADCraft 1.0", "PdfCraft is now DocuCraft"]);

@@ -73,6 +73,18 @@ impl AppEntry {
         self.release().map(Release::version_label)
     }
 
+    /// [`AppEntry::latest_label`] beside `installed` (shown the same way): a later publik build of
+    /// the installed version shows its build number (`0.8.0-publik.2`), so an update never reads
+    /// "0.8.0 → 0.8.0".
+    pub fn latest_label_beside(&self, installed: Option<&str>) -> Option<String> {
+        let label = self.latest_label()?;
+        let build = self.release().and_then(|r| r.version.as_ref()).and_then(version::publik_number);
+        Some(match build {
+            Some(n) if installed == Some(label.as_str()) => format!("{label}-publik.{n}"),
+            _ => label,
+        })
+    }
+
     pub fn failure(&self) -> Option<&str> {
         match &self.latest {
             Some(LatestRelease::Failed(why)) => Some(why),
@@ -134,5 +146,35 @@ pub fn status_rank(status: &AppStatus) -> u8 {
         AppStatus::Checking => 4,
         AppStatus::Unavailable => 5,
         AppStatus::NoRelease => 6,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use artcraft_launcher_core::InstallSource;
+
+    use super::*;
+
+    fn entry(installed: &str, tag: &str) -> AppEntry {
+        let app = CraftApp::by_id("gridcraft").unwrap();
+        let release = Release { tag: tag.into(), version: artcraft_launcher_core::release::publik_tag(tag), ..Release::default() };
+        AppEntry {
+            latest: Some(LatestRelease::Found(release)),
+            installed: Some(Installed { version: version::parse(installed), source: InstallSource::MacApp, location: String::new(), package: None }),
+            detected: true,
+            ..AppEntry::new(app)
+        }
+    }
+
+    #[test]
+    fn a_later_build_of_the_same_version_shows_its_number() {
+        let e = entry("0.8.0+publik.1", "v0.8.0-publik.2");
+        assert_eq!(e.status(None, true), AppStatus::UpdateAvailable);
+        let installed = e.installed_label();
+        assert_eq!(e.latest_label_beside(installed.as_deref()).as_deref(), Some("0.8.0-publik.2"));
+        assert_eq!(crate::card_parts::strip_version(&e, &AppStatus::UpdateAvailable), "0.8.0 → 0.8.0-publik.2 · publik build");
+        // A new version reads as before.
+        let e = entry("0.7.0+publik.3", "v0.8.0-publik.2");
+        assert_eq!(e.latest_label_beside(Some("0.7.0")).as_deref(), Some("0.8.0"));
     }
 }

@@ -52,13 +52,13 @@ fn release(id: &str, v: &str, at: i64) -> Release {
         version: version::parse(v),
         name: format!("v{v}"),
         published_at: Some(at),
-        html_url: format!("https://github.com/storytold/{id}/releases/tag/v{v}"),
-        notes: "## What's Changed\n* Faster things by @a in https://github.com/storytold/x/pull/1".into(),
+        html_url: format!("https://github.com/Blueturboguy07/{id}/releases/tag/v{v}"),
+        notes: "## What's Changed\n* Faster things by @a in https://github.com/Blueturboguy07/x/pull/1".into(),
         prerelease: false,
         assets: vec![Asset {
             name: name.clone(),
             size: 150 << 20,
-            url: format!("https://github.com/storytold/{id}/releases/download/v{v}/{name}"),
+            url: format!("https://github.com/Blueturboguy07/{id}/releases/download/v{v}/{name}"),
             sha256: None,
         }],
     }
@@ -84,10 +84,10 @@ fn events() -> Vec<Event> {
         ev.push(Event::Latest {
             app: (*id).into(),
             latest: LatestRelease::Found(release(id, v, NOW - 86_400 - i as i64 * 600)),
-            from: Origin::ArtCraftApi,
+            from: Origin::Publik,
         });
     }
-    ev.push(Event::Latest { app: "soundcraft".into(), latest: LatestRelease::None, from: Origin::ArtCraftApi });
+    ev.push(Event::Latest { app: "soundcraft".into(), latest: LatestRelease::None, from: Origin::Publik });
     let installed = [("photocraft", "0.4.1"), ("lightcraft", "0.4.0"), ("wordcraft", "0.3.0"), ("effectcraft", "0.5.0")];
     for app in &SUITE {
         let inst = installed.iter().find(|(id, _)| *id == app.id).map(|(_, v)| Installed {
@@ -178,7 +178,7 @@ fn simplified_chinese_switches_persists_and_keeps_install_actions() {
     h.get_by_label("完成").click();
     h.run_steps(3);
     h.get_by_label("图像编辑");
-    h.get_by_label_contains("上次检查：3 分钟前 · 来源：ArtCraft API");
+    h.get_by_label_contains("上次检查：3 分钟前 · 来源：publik");
     h.get_by_label("更新至 0.5.0");
     // Product names stay in English.
     assert!(h.query_by_label("Launcher").is_none());

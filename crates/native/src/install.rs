@@ -93,8 +93,10 @@ pub fn install_at(
     log::info!("{}: download ready ({}), running installer...", app.name, file.display());
     // Past this point the install can't be interrupted halfway.
     (job.phase)(JobPhase::Installing);
+    // The record keeps the whole version, publik's build number included (`0.8.0+publik.2`), so
+    // detection can tell when a later publik build of the same version is an update.
     #[allow(unused_variables)]
-    let version = release.version_label();
+    let version = release.version.as_ref().map_or_else(|| release.tag.clone(), ToString::to_string);
     let result = match kind {
         #[cfg(target_os = "macos")]
         PackageKind::Dmg => {
@@ -106,7 +108,11 @@ pub fn install_at(
         #[cfg(windows)]
         PackageKind::PortableZip => {
             crate::portable::install(app, &file, &version, previous, job.paths, destination.as_deref(), job.replace, &mut |record| {
-                if release.version.is_some() && crate::detect::windows::executable_version(&record.path).as_ref() != release.version.as_ref() {
+                // The exe reports the numbers only: publik's build mark isn't part of the match.
+                if let Some(want) = release.version.as_ref()
+                    && crate::detect::windows::executable_version(&record.path)
+                        .is_none_or(|got| artcraft_launcher_core::version::compare(&got, want) != std::cmp::Ordering::Equal)
+                {
                     return Err("The portable executable does not match the selected version. The installation was rolled back.".into());
                 }
                 match commit.as_deref_mut() {

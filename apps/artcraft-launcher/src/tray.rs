@@ -56,7 +56,7 @@ impl Tray {
         let show = MenuItem::new(i18n::t("Show ArtCraft Launcher"), true, None);
         let check = MenuItem::new(i18n::t("Check for Updates"), true, None);
         use artcraft_launcher_core::catalog::{GITHUB_URL, WEBSITE_URL};
-        let website = MenuItem::new(i18n::t("Visit getartcraft.com"), true, None);
+        let website = MenuItem::new(i18n::t("Visit publikhq.com"), true, None);
         let github = MenuItem::new(i18n::t("ArtCraft on GitHub"), true, None);
         let discord = MenuItem::new(i18n::t("Join the ArtCraft Discord"), true, None);
         let quit = MenuItem::new(i18n::t("Quit ArtCraft Launcher"), true, None);
@@ -109,7 +109,7 @@ impl Tray {
         let labels = vec![
             (show, "Show ArtCraft Launcher"),
             (check, "Check for Updates"),
-            (website, "Visit getartcraft.com"),
+            (website, "Visit publikhq.com"),
             (github, "ArtCraft on GitHub"),
             (discord, "Join the ArtCraft Discord"),
             (quit, "Quit ArtCraft Launcher"),

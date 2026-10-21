@@ -3,7 +3,7 @@
 # supplied. The mark is an ArtCraft trademark, NOT MIT/Apache: docs/brand/LICENSE-brand.txt.
 #
 # - App icon (Dock, taskbar, Start menu, Linux menus, installers): the blue mark, which is also
-#   getartcraft.com's favicon.
+#   publik's favicon.
 # - Tray: the black mark as the macOS menu-bar template; the blue mark on Windows, Linux and BSD.
 #
 # Needs: resvg (brew install resvg / cargo install resvg). The .ico and .icns are packed by

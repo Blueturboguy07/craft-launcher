@@ -125,13 +125,13 @@ fn release(id: &str, v: &str, at: i64) -> Release {
         version: version::parse(v),
         name: format!("v{v}"),
         published_at: Some(at),
-        html_url: format!("https://github.com/storytold/{id}/releases/tag/v{v}"),
-        notes: "## What's Changed\n* Faster things by @a in https://github.com/storytold/x/pull/1".into(),
+        html_url: format!("https://github.com/Blueturboguy07/{id}/releases/tag/v{v}"),
+        notes: "## What's Changed\n* Faster things by @a in https://github.com/Blueturboguy07/x/pull/1".into(),
         prerelease: false,
         assets: vec![Asset {
             name: name.clone(),
             size: 150 << 20,
-            url: format!("https://github.com/storytold/{id}/releases/download/v{v}/{name}"),
+            url: format!("https://github.com/Blueturboguy07/{id}/releases/download/v{v}/{name}"),
             sha256: None,
         }],
     }
@@ -157,10 +157,10 @@ fn events() -> Vec<Event> {
         ev.push(Event::Latest {
             app: (*id).into(),
             latest: LatestRelease::Found(release(id, v, NOW - 86_400 - i as i64 * 600)),
-            from: Origin::ArtCraftApi,
+            from: Origin::Publik,
         });
     }
-    ev.push(Event::Latest { app: "soundcraft".into(), latest: LatestRelease::None, from: Origin::ArtCraftApi });
+    ev.push(Event::Latest { app: "soundcraft".into(), latest: LatestRelease::None, from: Origin::Publik });
     let installed = [("photocraft", "0.4.1"), ("lightcraft", "0.4.0"), ("wordcraft", "0.3.0"), ("effectcraft", "0.5.0")];
     for app in &SUITE {
         let inst = installed.iter().find(|(id, _)| *id == app.id).map(|(_, v)| Installed {
@@ -905,7 +905,7 @@ fn links_to_the_website_github_and_each_apps_pages() {
     for label in ["Website", "GitHub", "Discord"] {
         assert!(h.query_all_by_label(label).count() >= 1, "{label}");
     }
-    // Cards: every app links to its repo and to its own page on getartcraft.com (plus the footer's).
+    // Cards: every app links to its repo and to its own listing on publikhq.com (plus the footer's).
     let shown_cards = h.query_all_by_label("GitHub").count() - 1;
     let shown_sites = h.query_all_by_label("Website").count() - 1;
     assert!(shown_cards >= 13, "{shown_cards}");
@@ -951,13 +951,13 @@ fn links_open_the_right_pages() {
     let (mut h, _) = harness(ViewMode::Grid, egui::Theme::Dark, true);
     h.run_steps(6);
     assert_eq!(click_opens(&mut h, "Discord").as_deref(), Some("https://discord.gg/artcraft"));
-    // The footer's ArtCraft links and each card's own pages.
+    // The footer's links (publik's suite page and forks) and each card's own pages.
     let github = all_opened(&mut h, "GitHub");
-    assert!(github.contains(&"https://github.com/storytold".to_string()), "{github:?}");
-    assert!(github.contains(&"https://github.com/storytold/photocraft".to_string()), "{github:?}");
+    assert!(github.contains(&"https://github.com/Blueturboguy07".to_string()), "{github:?}");
+    assert!(github.contains(&"https://github.com/Blueturboguy07/photocraft".to_string()), "{github:?}");
+    assert!(github.iter().all(|u| u.starts_with("https://github.com/Blueturboguy07")), "{github:?}");
     let sites = all_opened(&mut h, "Website");
-    assert!(sites.contains(&"https://getartcraft.com".to_string()), "{sites:?}");
-    assert_eq!(sites, vec!["https://getartcraft.com".to_string()], "{sites:?}");
+    assert_eq!(sites, vec!["https://publikhq.com/adobe".to_string()], "{sites:?}");
     // Social icons in the footer.
     assert_eq!(click_opens(&mut h, "X").as_deref(), Some("https://x.com/get_artcraft"));
     assert_eq!(click_opens(&mut h, "YouTube").as_deref(), Some("https://www.youtube.com/@OfficialArtcraftStudios"));
@@ -969,7 +969,7 @@ fn links_open_the_right_pages() {
     h.run_steps(3);
     // The first card is the first installed app by name.
     let url = click_opens(&mut h, "All releases").unwrap_or_default();
-    assert!(url.starts_with("https://github.com/storytold/") && url.ends_with("/releases"), "{url}");
+    assert!(url.starts_with("https://github.com/Blueturboguy07/") && url.ends_with("/releases"), "{url}");
 }
 
 #[test]
@@ -1126,8 +1126,8 @@ fn feed_announcements_and_alerts_show_until_dismissed() {
     let sent = Rc::new(RefCell::new(Vec::new()));
     let mut evs = events();
     evs.push(Event::Notices {
-        announcements: vec![notice("a1", "CADCraft 1.0 is out", Some("https://getartcraft.com/news"))],
-        alerts: vec![notice("x1", "Security update", Some("https://getartcraft.com/security"))],
+        announcements: vec![notice("a1", "CADCraft 1.0 is out", Some("https://publikhq.com/news"))],
+        alerts: vec![notice("x1", "Security update", Some("https://publikhq.com/security"))],
     });
     let mut backend = Some(Fake { events: evs, sent, manage: true, pictures: Rc::default(), asked: Vec::new(), clock: Rc::new(Cell::new(NOW)) });
     let mut h = Harness::builder().with_size(egui::vec2(1180.0, 1200.0)).build_ui_state(
@@ -1253,10 +1253,10 @@ fn the_footer_names_the_services_behind_what_is_on_screen() {
             h.get_by_label_contains("Checked ").accesskit_node().label().or_else(|| h.get_by_label_contains("Checked ").accesskit_node().value());
         label.unwrap_or_default()
     };
-    assert_eq!(footer(Vec::new()), "Checked 3 min ago · using ArtCraft API");
+    assert_eq!(footer(Vec::new()), "Checked 3 min ago · using publik");
     let from_github =
         vec![Event::Latest { app: "wordcraft".into(), latest: LatestRelease::Found(release("wordcraft", "0.3.1", NOW)), from: Origin::GitHub }];
-    assert_eq!(footer(from_github), "Checked 3 min ago · using ArtCraft API and GitHub");
+    assert_eq!(footer(from_github), "Checked 3 min ago · using publik and GitHub");
 }
 
 #[test]

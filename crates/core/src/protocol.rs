@@ -133,16 +133,16 @@ pub const INSTALL_CANCELLED: &str = "install cancelled";
 /// Which service an app's release information came from (the footer names them).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Origin {
-    /// ArtCraft's release feed (storyteller-web), which polls GitHub for everyone.
-    ArtCraftApi,
-    /// GitHub directly: the fallback.
+    /// publik's release feed (`publikhq.com`), which reads publik's forks for everyone.
+    Publik,
+    /// GitHub directly (publik's forks): the fallback.
     GitHub,
 }
 
 impl Origin {
     pub fn label(self) -> &'static str {
         match self {
-            Self::ArtCraftApi => "ArtCraft API",
+            Self::Publik => "publik",
             Self::GitHub => "GitHub",
         }
     }
@@ -151,7 +151,7 @@ impl Origin {
 /// Where release information came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Source {
-    /// ArtCraft's release feed (storyteller-web), which polls GitHub for everyone.
+    /// publik's release feed (`publikhq.com`), which reads publik's forks for everyone.
     Feed,
     /// The GitHub REST API.
     GitHubApi,
@@ -164,7 +164,7 @@ pub enum Source {
 impl Source {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Feed => "ArtCraft",
+            Self::Feed => "publik",
             Self::GitHubApi => "GitHub",
             Self::GitHubPages => "GitHub (release pages)",
             Self::Cache => "saved results",
@@ -185,7 +185,7 @@ pub enum Event {
     LauncherUpdate(Release),
     /// The new launcher is in place (or will be, once this one exits): quit now so it can start.
     LauncherRestarting,
-    /// News and alerts from ArtCraft's release feed (replaces any earlier set).
+    /// News and alerts from publik's release feed (replaces any earlier set).
     Notices {
         announcements: Vec<crate::feed::Notice>,
         alerts: Vec<crate::feed::Notice>,

@@ -251,13 +251,11 @@ async fn picture(url: &str) -> Result<Vec<u8>, PictureError> {
     Ok(bytes)
 }
 
-/// The latest release; `Err(Some(reset))` when rate-limited, `Err(None)` on other failures.
+/// publik's latest build in its fork `repo`; `Err(Some(reset))` when rate-limited, `Err(None)` on
+/// other failures.
 async fn latest(repo: &str, prereleases: bool) -> Result<LatestRelease, Option<i64>> {
-    let url = if prereleases {
-        format!("https://api.github.com/repos/{repo}/releases?per_page=30")
-    } else {
-        format!("https://api.github.com/repos/{repo}/releases/latest")
-    };
+    // publik's fork: only its publik builds (`v<version>-publik.<n>`) count, never its other releases.
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page=30");
     let window = web_sys::window().ok_or(None)?;
     let init = web_sys::RequestInit::new();
     init.set_method("GET");
@@ -275,11 +273,7 @@ async fn latest(repo: &str, prereleases: bool) -> Result<LatestRelease, Option<i
         _ => return Err(None),
     }
     let text = JsFuture::from(resp.text().map_err(|_| None)?).await.map_err(|_| None)?.as_string().ok_or(None)?;
-    let found: Option<Release> = if prereleases {
-        release::parse_github_release_list(&text, repo, true).map_err(|_| None)?
-    } else {
-        Some(release::parse_github_release(&text, repo).map_err(|_| None)?)
-    };
+    let found: Option<Release> = release::parse_publik_release_list(&text, repo, prereleases).map_err(|_| None)?;
     Ok(found.map_or(LatestRelease::None, LatestRelease::Found))
 }
 

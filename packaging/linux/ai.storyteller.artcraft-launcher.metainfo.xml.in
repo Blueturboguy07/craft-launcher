@@ -25,10 +25,10 @@
   <launchable type="desktop-id">ai.storyteller.artcraft-launcher.desktop</launchable>
   <icon type="stock">ai.storyteller.artcraft-launcher</icon>
   <!-- Only url types known to appstream 0.15 (Ubuntu 22.04, where CI validates): no vcs-browser. -->
-  <url type="homepage">https://getartcraft.com/apps</url>
+  <url type="homepage">https://publikhq.com/adobe</url>
   <url type="bugtracker">https://github.com/storytold/craft-launcher/issues</url>
   <url type="help">https://github.com/storytold/craft-launcher</url>
-  <url type="contact">https://discord.gg/artcraft</url>
+  <url type="contact">https://publikhq.com/adobe</url>
   <categories>
     <category>Utility</category>
     <category>PackageManager</category>

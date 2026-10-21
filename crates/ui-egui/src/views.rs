@@ -260,7 +260,7 @@ impl LauncherUi {
         }
     }
 
-    /// News from ArtCraft's release feed (and app renames), until the user dismisses each.
+    /// News from publik's release feed (and app renames), until the user dismisses each.
     fn announcements(&mut self, ui: &mut Ui) {
         let t = Tokens::get(ui.ctx());
         let shown: Vec<artcraft_launcher_core::feed::Notice> =
@@ -983,7 +983,7 @@ pub(crate) fn version_line(e: &AppEntry, status: &AppStatus) -> String {
 fn version_text(e: &AppEntry, status: &AppStatus) -> String {
     let released = e.release().and_then(|r| r.published_at).map(|at| format!(" · {}", date_text(at))).unwrap_or_default();
     let inst_ver = e.installed.as_ref().and_then(|i| i.version.as_ref().map(artcraft_launcher_core::version::label));
-    let latest = e.latest_label();
+    let latest = e.latest_label_beside(inst_ver.as_deref());
     match (status, inst_ver.as_deref(), latest.as_deref()) {
         (AppStatus::UpdateAvailable, Some(i), Some(l)) => {
             format!("{}{released}", fmt(tl!("{version} installed → {latest} released"), &[("version", i), ("latest", l)]))
@@ -1042,7 +1042,7 @@ mod tests {
             version: None,
             name: "ArtCraft Launcher v0.4.1".into(),
             published_at: None,
-            html_url: "https://github.com/storytold/craft-launcher/releases/tag/v0.4.1".into(),
+            html_url: "https://github.com/Blueturboguy07/craft-launcher/releases/tag/v0.4.1".into(),
             notes: String::new(),
             prerelease: false,
             assets: vec![

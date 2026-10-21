@@ -132,8 +132,8 @@ mod tests {
     fn reads_githubs_generated_notes() {
         assert_eq!(classify("## What's Changed"), Line::Heading("What's Changed"));
         assert_eq!(
-            classify("* Add the Patch tool (#213) by @a in https://github.com/storytold/photocraft/pull/381"),
-            Line::Bullet("Add the Patch tool (#213) by @a", Some("https://github.com/storytold/photocraft/pull/381"))
+            classify("* Add the Patch tool (#213) by @a in https://github.com/Blueturboguy07/photocraft/pull/381"),
+            Line::Bullet("Add the Patch tool (#213) by @a", Some("https://github.com/Blueturboguy07/photocraft/pull/381"))
         );
         assert_eq!(classify("- plain bullet"), Line::Bullet("plain bullet", None));
         assert_eq!(classify("   "), Line::Blank);

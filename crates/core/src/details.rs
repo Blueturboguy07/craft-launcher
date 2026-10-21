@@ -50,6 +50,7 @@ const fn feature(title: &'static str, text: &'static str) -> Feature {
 /// Pinned to a tag (`SCREENSHOTS_REV`) so that what a launcher fetches never changes under it, and
 /// so that a saved copy never goes stale. To change a picture, publish a new tag and bump the
 /// revision: older launchers keep working from the tag they know.
+// TODO(publik): mirror the pictures to a publik-owned repo and point this there (still ArtCraft's).
 pub const SCREENSHOTS_BASE: &str = "https://raw.githubusercontent.com/storytold/craft-launcher-assets";
 
 /// The tag of the pictures repository the launcher reads. Also part of the saved copies' path.

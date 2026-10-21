@@ -20,7 +20,8 @@ pub struct CraftApp {
     pub ink_light: [u8; 3],
     /// The brand colour for text on a dark background (the site's dark `--app-ink`).
     pub ink_dark: [u8; 3],
-    /// GitHub `owner/repo`.
+    /// GitHub `owner/repo`: publik's fork (`Blueturboguy07/<id>`), the only place the launcher
+    /// looks for this app's releases.
     pub repo: &'static str,
     /// Older names its release assets may carry (PdfCraft shipped as PrintCraft until 0.2.1).
     pub former_ids: &'static [&'static str],
@@ -42,9 +43,9 @@ impl CraftApp {
         format!("https://github.com/{}", self.repo)
     }
 
-    /// The app's page on getartcraft.com.
+    /// The app's listing on publik (`https://publikhq.com/<id>`).
     pub fn website(&self) -> String {
-        format!("https://getartcraft.com/apps/{}", self.id)
+        format!("{PUBLIK_URL}/{}", self.id)
     }
 
     /// Asset stems this app's releases may use, current first.
@@ -61,7 +62,8 @@ impl CraftApp {
         SUITE.iter().find(|a| a.id == id)
     }
 
-    /// publik's fork of the app, where publik's own builds are released: `Blueturboguy07/<repo>`.
+    /// publik's fork of the app, where publik's own builds are released: `Blueturboguy07/<repo>`
+    /// (the same as [`CraftApp::repo`]).
     pub fn publik_repo(&self) -> String {
         format!("{PUBLIK_OWNER}/{}", self.repo_name())
     }
@@ -90,21 +92,27 @@ const fn app(
 
 /// The Craft App Suite, in display order matching getartcraft.com:
 pub const SUITE: [CraftApp; 13] = [
-    app("photocraft", "PhotoCraft", "Image editing", [[0x2f, 0x7b, 0xf5], [0x1a, 0x5b, 0xc4], [0x7f, 0xb0, 0xff]], "storytold/photocraft"),
-    app("vectorcraft", "VectorCraft", "Vector illustration", [[0xe8, 0x57, 0x3f], [0xb8, 0x3a, 0x24], [0xff, 0x8a, 0x70]], "storytold/vectorcraft"),
+    app("photocraft", "PhotoCraft", "Image editing", [[0x2f, 0x7b, 0xf5], [0x1a, 0x5b, 0xc4], [0x7f, 0xb0, 0xff]], "Blueturboguy07/photocraft"),
+    app(
+        "vectorcraft",
+        "VectorCraft",
+        "Vector illustration",
+        [[0xe8, 0x57, 0x3f], [0xb8, 0x3a, 0x24], [0xff, 0x8a, 0x70]],
+        "Blueturboguy07/vectorcraft",
+    ),
     app(
         "filmcraft",
         "FilmCraft",
         "Video editing, color and sound",
         [[0x8b, 0x5c, 0xf6], [0x6a, 0x3f, 0xd6], [0xb6, 0x9c, 0xff]],
-        "storytold/filmcraft",
+        "Blueturboguy07/filmcraft",
     ),
     app(
         "lightcraft",
         "LightCraft",
         "Photo library and raw development",
         [[0xf2, 0xa5, 0x16], [0x8a, 0x58, 0x00], [0xff, 0xc1, 0x4d]],
-        "storytold/lightcraft",
+        "Blueturboguy07/lightcraft",
     ),
     CraftApp {
         former_ids: &["printcraft"],
@@ -114,7 +122,7 @@ pub const SUITE: [CraftApp; 13] = [
             "PdfCraft",
             "Reading, organizing and protecting PDFs",
             [[0x12, 0xa5, 0x8a], [0x0a, 0x75, 0x63], [0x3f, 0xd6, 0xb8]],
-            "storytold/pdfcraft",
+            "Blueturboguy07/pdfcraft",
         )
     },
     app(
@@ -122,58 +130,66 @@ pub const SUITE: [CraftApp; 13] = [
         "EffectCraft",
         "Motion graphics and visual effects",
         [[0xe0, 0x36, 0x8f], [0xb0, 0x20, 0x6c], [0xff, 0x7a, 0xb8]],
-        "storytold/effectcraft",
+        "Blueturboguy07/effectcraft",
     ),
     app(
         "designcraft",
         "DesignCraft",
         "Page layout and publishing",
         [[0x7b, 0xb5, 0x1c], [0x45, 0x70, 0x08], [0xa6, 0xe0, 0x4a]],
-        "storytold/designcraft",
+        "Blueturboguy07/designcraft",
     ),
     app(
         "figcraft",
         "FigCraft",
         "Interface design and prototyping",
         [[0x02, 0xda, 0x96], [0x04, 0x7a, 0x56], [0x4f, 0xe8, 0xb6]],
-        "storytold/figcraft",
+        "Blueturboguy07/figcraft",
     ),
-    app("wordcraft", "WordCraft", "Writing and document design", [[0x3f, 0x5f, 0xe0], [0x2a, 0x44, 0xb8], [0x8e, 0xa2, 0xff]], "storytold/wordcraft"),
+    app(
+        "wordcraft",
+        "WordCraft",
+        "Writing and document design",
+        [[0x3f, 0x5f, 0xe0], [0x2a, 0x44, 0xb8], [0x8e, 0xa2, 0xff]],
+        "Blueturboguy07/wordcraft",
+    ),
     app(
         "soundcraft",
         "SoundCraft",
         "Recording, editing and mixing audio",
         [[0x1f, 0xa5, 0xc9], [0x0e, 0x72, 0x90], [0x5f, 0xd0, 0xee]],
-        "storytold/soundcraft",
+        "Blueturboguy07/soundcraft",
     ),
     app(
         "deckcraft",
         "DeckCraft",
         "Presentations and slide shows",
         [[0xf0, 0x7a, 0x1e], [0xa8, 0x4f, 0x0a], [0xff, 0xa0, 0x60]],
-        "storytold/deckcraft",
+        "Blueturboguy07/deckcraft",
     ),
     app(
         "cadcraft",
         "CADCraft",
         "Computer-aided design and drafting",
         [[0x3e, 0xa6, 0xe8], [0x1a, 0x6f, 0xa8], [0x7c, 0xc8, 0xff]],
-        "storytold/cadcraft",
+        "Blueturboguy07/cadcraft",
     ),
-    app("gridcraft", "GridCraft", "Spreadsheets and data", [[0x1f, 0x9d, 0x55], [0x12, 0x70, 0x3a], [0x4f, 0xd6, 0x8a]], "storytold/gridcraft"),
+    app("gridcraft", "GridCraft", "Spreadsheets and data", [[0x1f, 0x9d, 0x55], [0x12, 0x70, 0x3a], [0x4f, 0xd6, 0x8a]], "Blueturboguy07/gridcraft"),
 ];
 
-/// ArtCraft's website.
-pub const WEBSITE_URL: &str = "https://getartcraft.com";
-/// The GitHub account every Craft App's repository lives under: the only one the release feed
-/// can send the launcher to, whatever it says. publik's own builds come from [`PUBLIK_OWNER`].
-pub const GITHUB_OWNER: &str = "storytold";
-/// ArtCraft on GitHub: every Craft App's source.
-pub const GITHUB_URL: &str = "https://github.com/storytold";
+/// publik's website: each app's listing is `<PUBLIK_URL>/<id>` ([`CraftApp::website`]).
+pub const PUBLIK_URL: &str = "https://publikhq.com";
+/// The Craft App Suite's page on publik.
+pub const WEBSITE_URL: &str = "https://publikhq.com/adobe";
 /// publik's GitHub account. publik builds, signs and releases its own copy of each Craft App
-/// from a fork with the same name, tagged `v<version>-publik.<n>`. The launcher prefers such a
-/// build when there is one for this computer, and uses ArtCraft's release when there is none.
+/// from a fork with the same name, tagged `v<version>-publik.<n>`. The launcher installs only
+/// such builds: with none for this computer, an app has no release to offer.
 pub const PUBLIK_OWNER: &str = "Blueturboguy07";
+/// The GitHub account every repository the launcher reads lives under (publik's): the only one
+/// the release feed can send the launcher to, whatever it says.
+pub const GITHUB_OWNER: &str = PUBLIK_OWNER;
+/// publik's forks of the Craft Apps on GitHub.
+pub const GITHUB_URL: &str = "https://github.com/Blueturboguy07";
 /// ArtCraft's social accounts: (service, URL). Shown as small icons, less prominent than Discord.
 pub const SOCIAL: [(&str, &str); 5] = [
     ("X", "https://x.com/get_artcraft"),
@@ -196,11 +212,11 @@ pub const LAUNCHER: CraftApp = app(
     "ArtCraft Launcher",
     "Installs and updates the Craft App Suite",
     [[0x0b, 0x0b, 0x0c], [0x0b, 0x0b, 0x0c], [0xf2, 0xf1, 0xee]],
-    "storytold/craft-launcher",
+    "Blueturboguy07/craft-launcher",
 );
 
-/// The launcher's own repo, checked so it can say when a newer launcher is out.
-pub const LAUNCHER_REPO: &str = "storytold/craft-launcher";
+/// The launcher's own repo (publik's fork), checked so it can say when a newer launcher is out.
+pub const LAUNCHER_REPO: &str = "Blueturboguy07/craft-launcher";
 /// The launcher's own asset stem.
 pub const LAUNCHER_ID: &str = "artcraft-launcher";
 
@@ -216,7 +232,7 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), SUITE.len());
         for a in &SUITE {
-            assert_eq!(a.repo, format!("storytold/{}", a.id));
+            assert_eq!(a.repo, format!("Blueturboguy07/{}", a.id));
             assert_eq!(a.name.to_lowercase(), a.id);
         }
     }
@@ -228,6 +244,8 @@ mod tests {
             assert_eq!(a.publik_bundle_id(), format!("com.publik.{}", a.id));
         }
         assert_eq!(LAUNCHER.publik_repo(), "Blueturboguy07/craft-launcher");
+        assert_eq!(LAUNCHER.repo, LAUNCHER_REPO);
+        assert!(SUITE.iter().chain([&LAUNCHER]).all(|a| a.repo == a.publik_repo() && a.repo.starts_with("Blueturboguy07/")));
         assert_eq!(LAUNCHER.publik_bundle_id(), "com.publik.craftlauncher");
     }
 
@@ -236,7 +254,8 @@ mod tests {
         let pdf = CraftApp::by_id("pdfcraft").unwrap();
         assert_eq!(pdf.stems().collect::<Vec<_>>(), ["pdfcraft", "printcraft"]);
         assert_eq!(pdf.names().collect::<Vec<_>>(), ["PdfCraft", "PrintCraft"]);
-        assert_eq!(pdf.website(), "https://getartcraft.com/apps/pdfcraft");
-        assert_eq!(CraftApp::by_id("wordcraft").unwrap().website(), "https://getartcraft.com/apps/wordcraft");
+        assert_eq!(pdf.website(), "https://publikhq.com/pdfcraft");
+        assert_eq!(CraftApp::by_id("wordcraft").unwrap().website(), "https://publikhq.com/wordcraft");
+        assert_eq!(WEBSITE_URL, "https://publikhq.com/adobe");
     }
 }

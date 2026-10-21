@@ -55,13 +55,13 @@ fn release(id: &str, v: &str, at: i64) -> Release {
         version: version::parse(v),
         name: format!("v{v}"),
         published_at: Some(at),
-        html_url: format!("https://github.com/storytold/{id}/releases/tag/v{v}"),
+        html_url: format!("https://github.com/Blueturboguy07/{id}/releases/tag/v{v}"),
         notes: String::new(),
         prerelease: false,
         assets: vec![Asset {
             name: name.clone(),
             size: 150 << 20,
-            url: format!("https://github.com/storytold/{id}/releases/download/v{v}/{name}"),
+            url: format!("https://github.com/Blueturboguy07/{id}/releases/download/v{v}/{name}"),
             sha256: None,
         }],
     }
@@ -71,7 +71,7 @@ fn events() -> Vec<Event> {
     let mut ev = Vec::new();
     for (i, app) in SUITE.iter().enumerate() {
         let latest = LatestRelease::Found(release(app.id, "0.5.0", NOW - 40 * 86_400 - i as i64 * 600));
-        ev.push(Event::Latest { app: app.id.into(), latest, from: Origin::ArtCraftApi });
+        ev.push(Event::Latest { app: app.id.into(), latest, from: Origin::Publik });
         let installed = matches!(app.id, "photocraft" | "lightcraft").then(|| Installed {
             version: version::parse(if app.id == "photocraft" { "0.4.1" } else { "0.5.0" }),
             source: InstallSource::MacApp,
@@ -130,7 +130,7 @@ fn hungarian_ui_translates_labels_dates_and_messages() {
     h.get_by_label("Képszerkesztés");
     h.get_by_label("Frissítés: 0.5.0");
     h.get_by_label_contains("Ellenőrzőösszeg ellenőrzése…");
-    h.get_by_label_contains("Ellenőrizve: 3 perce · ArtCraft API");
+    h.get_by_label_contains("Ellenőrizve: 3 perce · publik");
     h.get_by_label("LightCraft frissítve. Verzió: 0.5.0");
 
     let mut table = harness(ViewMode::Table);

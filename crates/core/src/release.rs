@@ -136,9 +136,8 @@ pub fn parse_publik_release_list(json: &str, repo: &str, allow_prerelease: bool)
         if !allow_prerelease && (r.prerelease || !version::is_stable(&ver)) {
             continue;
         }
-        let newer = best.as_ref().and_then(|b| b.version.as_ref()).is_none_or(|b| {
-            version::compare(&ver, b).then_with(|| version::publik_number(&ver).cmp(&version::publik_number(b))) == std::cmp::Ordering::Greater
-        });
+        // Both are publik builds: a higher version, else a higher build number.
+        let newer = best.as_ref().and_then(|b| b.version.as_ref()).is_none_or(|b| version::is_newer(&ver, b));
         if newer {
             r.version = Some(ver);
             best = Some(r);
@@ -246,11 +245,11 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
-    const REPO: &str = "storytold/photocraft";
+    const REPO: &str = "Blueturboguy07/photocraft";
 
     #[test]
     fn only_plain_https_links_pass() {
-        assert!(safe_web_link("https://github.com/storytold/photocraft/releases/tag/v1"));
+        assert!(safe_web_link("https://github.com/Blueturboguy07/photocraft/releases/tag/v1"));
         for bad in [
             "http://example.com/",
             "javascript:alert(1)",
@@ -269,7 +268,7 @@ mod tests {
 
     fn api_json(url: &str) -> String {
         format!(
-            r#"{{"tag_name":"v0.5.0","name":"PhotoCraft v0.5.0","html_url":"https://github.com/storytold/photocraft/releases/tag/v0.5.0",
+            r#"{{"tag_name":"v0.5.0","name":"PhotoCraft v0.5.0","html_url":"https://github.com/Blueturboguy07/photocraft/releases/tag/v0.5.0",
             "published_at":"2026-10-08T14:52:50Z","prerelease":false,"body":"Notes",
             "assets":[{{"name":"photocraft-0.5.0-macos-universal.dmg","size":123,"browser_download_url":"{url}","digest":"sha256:{HASH}"}}]}}"#
         )
@@ -278,7 +277,7 @@ mod tests {
     #[test]
     fn reads_the_latest_release() {
         let r = parse_github_release(
-            &api_json("https://github.com/storytold/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg"),
+            &api_json("https://github.com/Blueturboguy07/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg"),
             REPO,
         )
         .unwrap();
@@ -386,7 +385,7 @@ mod tests {
         assert_eq!(parse_publik_release_list(&fork_list(&[("v0.9.0", false, false)]), FORK, false).unwrap(), None);
         assert_eq!(parse_publik_release_list("[]", FORK, false).unwrap(), None);
         assert!(parse_publik_release_list(r#"{"message":"Not Found"}"#, FORK, false).is_err());
-        // ArtCraft's own releases are never marked as publik's.
+        // A plain release (ArtCraft's tag scheme, even in the fork) is never marked as publik's.
         let upstream = parse_github_release_list(r#"[{"tag_name":"v0.5.0","draft":false,"assets":[]}]"#, REPO, false).unwrap().unwrap();
         assert!(!upstream.is_publik());
     }
@@ -395,11 +394,11 @@ mod tests {
     fn reads_checksums_and_redirects() {
         let sums = parse_sha256sums(&format!("{HASH}  photocraft-0.5.0-macos-universal.dmg\n{HASH} *b.zip\nnot a line\n{HASH}  ../escape\n"));
         assert_eq!(sums, [(HASH.to_string(), "photocraft-0.5.0-macos-universal.dmg".to_string()), (HASH.to_string(), "b.zip".to_string())]);
-        assert_eq!(tag_from_redirect("https://github.com/storytold/photocraft/releases/tag/v0.5.0", REPO).as_deref(), Some("v0.5.0"));
-        assert_eq!(tag_from_redirect("https://github.com/storytold/photocraft/releases", REPO), None);
-        assert_eq!(tag_from_redirect("https://evil/storytold/photocraft/releases/tag/v1", REPO), None);
+        assert_eq!(tag_from_redirect("https://github.com/Blueturboguy07/photocraft/releases/tag/v0.5.0", REPO).as_deref(), Some("v0.5.0"));
+        assert_eq!(tag_from_redirect("https://github.com/Blueturboguy07/photocraft/releases", REPO), None);
+        assert_eq!(tag_from_redirect("https://evil/Blueturboguy07/photocraft/releases/tag/v1", REPO), None);
         let r = release_from_sums(REPO, "v0.5.0", &sums);
-        assert_eq!(r.assets[0].url, "https://github.com/storytold/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg");
+        assert_eq!(r.assets[0].url, "https://github.com/Blueturboguy07/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg");
         assert_eq!(r.version, Some(Version::new(0, 5, 0)));
     }
 

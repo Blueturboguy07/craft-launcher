@@ -80,7 +80,7 @@ struct Shared {
     feed_failures: Mutex<u32>,
     /// When the feed last answered (Unix seconds).
     feed_ok_at: Mutex<Option<i64>>,
-    /// How often ArtCraft's API may be called.
+    /// How often publik's release feed may be called.
     feed_throttle: Mutex<FeedThrottle>,
     /// Apps whose details pictures are on their way (a second request meanwhile does nothing).
     pictures_busy: Mutex<std::collections::HashSet<&'static str>>,
@@ -146,20 +146,24 @@ impl NativeBackend {
         backend
     }
 
-    /// Shows the saved answers from the last run straight away, before any network request: the
-    /// release feed's where they're still fresh, GitHub's otherwise.
+    /// Shows the saved answers from the last run straight away, before any network request:
+    /// publik's release feed where it's still fresh, else the last answer from publik's fork.
+    /// Only publik's builds, as [`release_for`] finds them.
     fn replay_cache(&self) {
         let pre = self.options().prereleases;
         let feed = if pre { None } else { load_feed(&self.paths) };
         let now = crate::now();
         for app in &SUITE {
-            // publik's own build first, when one was saved.
-            let publik = self.source.as_ref().and_then(|s| saved_publik_build(app, s.as_ref(), self.platform, pre));
-            let answer = publik.map(|r| (LatestRelease::Found(r), Origin::GitHub)).or_else(|| match feed.as_ref().map(|f| f.answer(app, now)) {
-                Some(FeedAnswer::Fresh(Some(r))) => Some((LatestRelease::Found(r), Origin::ArtCraftApi)),
-                Some(FeedAnswer::Fresh(None)) => Some((LatestRelease::None, Origin::ArtCraftApi)),
-                _ => self.source.as_ref().and_then(|s| s.cached(&feed_repo(feed.as_ref(), app), pre)).map(|l| (l, Origin::GitHub)),
-            });
+            let answer = match feed.as_ref().map(|f| f.answer(app, now)) {
+                Some(FeedAnswer::Fresh(build)) => {
+                    Some((for_platform(app, build.map_or(LatestRelease::None, LatestRelease::Found), self.platform), Origin::Publik))
+                }
+                _ => self
+                    .source
+                    .as_ref()
+                    .and_then(|s| s.cached(&app.publik_repo(), pre))
+                    .map(|l| (for_platform(app, l, self.platform), Origin::GitHub)),
+            };
             if let Some((latest, from)) = answer {
                 if let LatestRelease::Found(r) = &latest {
                     self.shared.latest.lock().unwrap_or_else(PoisonError::into_inner).insert(app.id.to_string(), r.clone());
@@ -209,9 +213,10 @@ impl NativeBackend {
         });
     }
 
-    /// Looks up the latest releases: ArtCraft's release feed first (one request for every app),
-    /// GitHub for anything the feed can't vouch for (apps it doesn't list, entries more than a
-    /// day old, or no answer at all), at most once an hour per app unless `force`.
+    /// Looks up publik's latest builds: publik's release feed first (one request for every app),
+    /// publik's forks on GitHub for anything the feed can't vouch for (apps it doesn't list,
+    /// entries more than a day old or not publik's builds, or no answer at all), at most once an
+    /// hour per app unless `force`. Nothing else is ever asked: no ArtCraft API, no ArtCraft repo.
     fn check(&self, force: bool) {
         let (Some(source), Some(http)) = (self.source.clone(), self.http.clone()) else {
             for app in &SUITE {
@@ -719,48 +724,11 @@ fn decide_fallback(answered: bool, loaded: bool, first_time: bool, failures: u32
     Fallback { trust_feed: !seriously_failed, github_every }
 }
 
-/// The latest release of `app`, which service it came from, and the GitHub route used (for the
-/// rate-limit notice): the feed when it's trusted and vouches for the app, else GitHub if it's
-/// due, else GitHub's last answer. No release when there's nothing new to say.
-#[allow(clippy::too_many_arguments)]
-fn latest_for(
-    app: &CraftApp,
-    feed: Option<&Feed>,
-    fallback: Fallback,
-    source: &dyn ReleaseSource,
-    shared: &Shared,
-    pre: bool,
-    force: bool,
-    now: i64,
-) -> (Option<LatestRelease>, Origin, Option<Source>) {
-    if fallback.trust_feed {
-        match feed.map(|f| f.answer(app, now)) {
-            Some(FeedAnswer::Fresh(Some(r))) => return (Some(LatestRelease::Found(r)), Origin::ArtCraftApi, Some(Source::Feed)),
-            Some(FeedAnswer::Fresh(None)) => return (Some(LatestRelease::None), Origin::ArtCraftApi, Some(Source::Feed)),
-            Some(FeedAnswer::AskGitHub) | None => {}
-        }
-    }
-    let repo = feed_repo(feed, app);
-    let due = {
-        let mut asked = shared.github_asked.lock().unwrap_or_else(PoisonError::into_inner);
-        let due = force || asked.get(app.id).is_none_or(|t| now - t >= fallback.github_every);
-        if due {
-            asked.insert(app.id.to_string(), now);
-        }
-        due
-    };
-    if due {
-        let answer = source.latest(&repo, pre);
-        (Some(answer.latest), Origin::GitHub, Some(answer.source))
-    } else {
-        (source.cached(&repo, pre), Origin::GitHub, None)
-    }
-}
-
-/// The release to offer for `app`: publik's own build first ([`publik_latest`]); else, for a
-/// Craft App, ArtCraft's release ([`latest_for`]), as before. The launcher updates itself only
-/// from publik's fork: ArtCraft's launcher would replace this one and drop the publik-first
-/// lookup, so with no publik build of the launcher for this platform there is no launcher update.
+/// The release to offer for `app` (the launcher included), which service it came from, and the
+/// route used (for the rate-limit notice). Only ever one of publik's builds: publik's release
+/// feed first, when it's trusted and vouches for the app; else publik's fork on GitHub
+/// ([`publik_latest`]). With no publik build for this platform the answer is no release, never
+/// ArtCraft's. `None` when there's nothing new to say.
 #[allow(clippy::too_many_arguments)]
 fn release_for(
     app: &CraftApp,
@@ -773,20 +741,19 @@ fn release_for(
     force: bool,
     now: i64,
 ) -> (Option<LatestRelease>, Origin, Option<Source>) {
-    if let Some(found) = publik_latest(app, source, shared, platform, fallback.github_every, pre, force, now) {
-        return found;
+    if fallback.trust_feed
+        && let Some(FeedAnswer::Fresh(build)) = feed.map(|f| f.answer(app, now))
+    {
+        let latest = build.map_or(LatestRelease::None, LatestRelease::Found);
+        return (Some(for_platform(app, latest, platform)), Origin::Publik, Some(Source::Feed));
     }
-    if app.id == LAUNCHER_ID {
-        return (None, Origin::GitHub, None);
-    }
-    latest_for(app, feed, fallback, source, shared, pre, force, now)
+    publik_latest(app, source, shared, platform, fallback.github_every, pre, force, now)
 }
 
-/// publik's own build of `app` (the launcher included), when publik's fork has one for this
-/// platform: the newest release tagged `…-publik.<n>` on `Blueturboguy07/<repo>`. The fork is
-/// asked as often as GitHub is for the fallback (`every` seconds per app, unless `force`);
-/// between times, and while GitHub doesn't answer, the saved answer stands. `None` when the fork
-/// has no such build, has none for this platform, or can't be asked and nothing is saved.
+/// publik's own build of `app` from its fork on GitHub: the newest release tagged
+/// `…-publik.<n>` on `Blueturboguy07/<repo>`, or no release when it has nothing for this platform.
+/// The fork is asked at most every `every` seconds per app, unless `force`; between times the
+/// saved answer stands, and with none saved there's nothing new to say (`None`).
 #[allow(clippy::too_many_arguments)]
 fn publik_latest(
     app: &CraftApp,
@@ -797,15 +764,13 @@ fn publik_latest(
     pre: bool,
     force: bool,
     now: i64,
-) -> Option<(Option<LatestRelease>, Origin, Option<Source>)> {
-    let platform = platform?;
+) -> (Option<LatestRelease>, Origin, Option<Source>) {
     let repo = app.publik_repo();
     let due = {
-        let key = format!("publik:{}", app.id);
         let mut asked = shared.github_asked.lock().unwrap_or_else(PoisonError::into_inner);
-        let due = force || asked.get(&key).is_none_or(|t| now - t >= every);
+        let due = force || asked.get(app.id).is_none_or(|t| now - t >= every);
         if due {
-            asked.insert(key, now);
+            asked.insert(app.id.to_string(), now);
         }
         due
     };
@@ -815,17 +780,15 @@ fn publik_latest(
     } else {
         (source.cached(&repo, pre), None)
     };
-    match latest {
-        Some(LatestRelease::Found(r)) if has_download(app, &r, platform) => Some((Some(LatestRelease::Found(r)), Origin::GitHub, used)),
-        _ => None,
-    }
+    (latest.map(|l| for_platform(app, l, platform)), Origin::GitHub, used)
 }
 
-/// publik's build of `app` as last saved, when it has something for `platform`.
-fn saved_publik_build(app: &CraftApp, source: &dyn ReleaseSource, platform: Option<Platform>, pre: bool) -> Option<Release> {
-    match source.cached(&app.publik_repo(), pre)? {
-        LatestRelease::Found(r) if platform.is_some_and(|p| has_download(app, &r, p)) => Some(r),
-        _ => None,
+/// `latest` as this computer sees it: a publik build with nothing `platform` can install is no
+/// release at all.
+fn for_platform(app: &CraftApp, latest: LatestRelease, platform: Option<Platform>) -> LatestRelease {
+    match latest {
+        LatestRelease::Found(r) if !platform.is_some_and(|p| has_download(app, &r, p)) => LatestRelease::None,
+        other => other,
     }
 }
 
@@ -842,11 +805,6 @@ fn limit_notice(source_used: Source, limited_until: Option<i64>) -> Option<i64> 
     limited_until.filter(|_| matches!(source_used, Source::GitHubPages | Source::Cache))
 }
 
-/// The repo to ask GitHub about, following the feed's repo renames.
-fn feed_repo(feed: Option<&Feed>, app: &CraftApp) -> String {
-    feed.map_or_else(|| app.repo.to_string(), |f| f.repo_for(app))
-}
-
 /// What came of asking the feed during one check.
 enum FeedFetch {
     Answered(Feed),
@@ -856,7 +814,7 @@ enum FeedFetch {
     Held,
 }
 
-/// Asks ArtCraft's release feed up to `attempts` times, as often as `throttle` allows (waiting at
+/// Asks publik's release feed up to `attempts` times, as often as `throttle` allows (waiting at
 /// most [`MAX_THROTTLE_WAIT`] for it), saving a good answer.
 fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrottle>, attempts: usize) -> FeedFetch {
     let mut asked = false;
@@ -864,7 +822,7 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
         let wait = throttle.lock().unwrap_or_else(PoisonError::into_inner).wait(crate::now());
         if wait > MAX_THROTTLE_WAIT {
             if !asked {
-                log::info!("holding off the ArtCraft API for {wait} s");
+                log::info!("holding off publik's release feed for {wait} s");
             }
             break;
         }
@@ -895,7 +853,7 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
                 }
             },
             Err(e) if e.throttled => {
-                log::warn!("the ArtCraft API asked us to slow down (HTTP 429); holding off");
+                log::warn!("publik's release feed asked us to slow down (HTTP 429); holding off");
                 Outcome::Throttled { retry_after: e.retry_after }
             }
             Err(e) => {
@@ -911,13 +869,21 @@ fn fetch_feed(http: &Http, paths: &Paths, url: &str, throttle: &Mutex<FeedThrott
     if asked { FeedFetch::Failed } else { FeedFetch::Held }
 }
 
-/// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at a staging server or a local copy
-/// (only `https://`, or plain `http://` on localhost).
+/// The feed's address. `ARTCRAFT_LAUNCHER_FEED_URL` points at publik's staging server or a
+/// local copy: only `https://publikhq.com/…` (or a subdomain), or plain `http://` on localhost.
 fn feed_url() -> String {
     std::env::var("ARTCRAFT_LAUNCHER_FEED_URL")
         .ok()
-        .filter(|u| u.starts_with("https://") || is_loopback(u))
+        .filter(|u| is_publik_url(u) || is_loopback(u))
         .unwrap_or_else(|| artcraft_launcher_core::feed::FEED_URL.to_string())
+}
+
+/// `https://publikhq.com/…` or `https://<sub>.publikhq.com/…`: no other host, port or user-info.
+fn is_publik_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let sub_ok = |sub: &str| !sub.is_empty() && sub.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.".contains(&b));
+    (host == "publikhq.com" || host.strip_suffix(".publikhq.com").is_some_and(sub_ok)) && !url.chars().any(|c| c.is_control() || c.is_whitespace())
 }
 
 /// `http://<loopback host>:<port>` and an optional path: the host must be exactly 127.0.0.1,
@@ -931,7 +897,7 @@ fn is_loopback(url: &str) -> bool {
 
 /// `ARTCRAFT_LAUNCHER_DOWNLOAD_BASE`: a mirror on this machine (`cargo xtask local serve`) that
 /// serves `release_info.json` and the builds it lists. While it's set, releases come only from
-/// there (never GitHub or ArtCraft's API), and its download links are trusted. Loopback only, so
+/// there (never GitHub or publik's server), and its download links are trusted. Loopback only, so
 /// nothing but the developer's own builds can be installed this way, and only in builds with the
 /// `local-mirror` feature: release builds ignore the variable.
 fn local_mirror() -> Option<String> {
@@ -950,7 +916,7 @@ fn local_mirror() -> Option<String> {
 }
 
 /// The local mirror's feed: `ARTCRAFT_LAUNCHER_FEED_URL` if set, else `release_info.json` beside
-/// the builds. Asked every check (it's on this machine), and never saved over ArtCraft's.
+/// the builds. Asked every check (it's on this machine), and never saved over publik's.
 fn local_feed(http: &Http, base: &str) -> Option<Feed> {
     let url = std::env::var("ARTCRAFT_LAUNCHER_FEED_URL").ok().filter(|u| is_loopback(u)).unwrap_or_else(|| format!("{base}release_info.json"));
     match http.get_feed(&url) {
@@ -975,7 +941,7 @@ fn mirror_latest(app: &CraftApp, feed: Option<&Feed>, now: i64) -> (Option<Lates
         Some(FeedAnswer::Fresh(None) | FeedAnswer::AskGitHub) => LatestRelease::None,
         None => LatestRelease::Failed("the local mirror didn't answer".into()),
     };
-    (Some(latest), Origin::ArtCraftApi, Some(Source::Feed))
+    (Some(latest), Origin::Publik, Some(Source::Feed))
 }
 
 /// The last saved feed answer, if any.
@@ -1131,12 +1097,12 @@ mod tests {
     use super::*;
     use crate::source::Answer;
 
-    /// GitHub, counting how often it's asked.
+    /// GitHub (publik's forks), counting how often it's asked.
     #[derive(Default)]
     struct CountingGitHub(AtomicUsize);
 
     impl ReleaseSource for CountingGitHub {
-        fn latest(&self, _repo: &str, _pre: bool) -> Answer {
+        fn publik(&self, _repo: &str, _pre: bool) -> Answer {
             self.0.fetch_add(1, Ordering::SeqCst);
             Answer { latest: LatestRelease::None, source: Source::GitHubApi }
         }
@@ -1231,10 +1197,16 @@ mod tests {
     /// The steady state: everything has loaded and the feed is answering.
     const LOADED: Fallback = Fallback { trust_feed: true, github_every: GITHUB_FALLBACK_EVERY };
 
+    /// publik's feed: a fresh publik build of PhotoCraft (for macOS only), and DeckCraft with a
+    /// tag that isn't a publik build.
     fn feed() -> Feed {
         Feed::parse(
             r#"{"release_info": {"apps": {
-            "photocraft": {"repo": "storytold/photocraft", "latest_release": {"tag": "v0.6.0"}, "app_last_fetched": "2026-10-09T13:00:00Z"}
+            "photocraft": {"repo": "Blueturboguy07/photocraft", "app_last_fetched": "2026-10-09T13:00:00Z",
+              "latest_release": {"tag": "v0.6.0-publik.1", "assets": [{"name": "photocraft-0.6.0-macos-universal.dmg", "size_bytes": 3,
+                "download_url": "https://github.com/Blueturboguy07/photocraft/releases/download/v0.6.0-publik.1/photocraft-0.6.0-macos-universal.dmg",
+                "sha256": "8a5edab282632443219e051e4ade2d1d5bbc671c781051bf1437897cbdfea0f1"}]}},
+            "deckcraft": {"repo": "Blueturboguy07/deckcraft", "latest_release": {"tag": "v0.7.0"}, "app_last_fetched": "2026-10-09T13:00:00Z"}
         }}}"#,
         )
         .unwrap()
@@ -1289,7 +1261,7 @@ mod tests {
         let feed = feed().with_mirror("http://127.0.0.1:8787/");
         // Listed: found, even long after the sync.
         let (latest, _, _) = mirror_latest(photo, Some(&feed), NOW + 30 * 86_400);
-        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0"));
+        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0-publik.1" && r.is_publik()));
         // Not listed: no release (rather than asking GitHub).
         assert!(matches!(mirror_latest(word, Some(&feed), NOW).0, Some(LatestRelease::None)));
         // Not running: says so.
@@ -1302,42 +1274,82 @@ mod tests {
     }
 
     #[test]
-    fn github_is_only_the_fallback_and_is_asked_rarely() {
+    fn the_feed_address_can_only_point_at_publik() {
+        assert!(artcraft_launcher_core::feed::FEED_URL.starts_with("https://publikhq.com/"));
+        for ok in ["https://publikhq.com/api/v1/craft/release_info", "https://staging.publikhq.com/api/v1/craft/release_info"] {
+            assert!(is_publik_url(ok), "{ok}");
+        }
+        for bad in [
+            "https://api.storyteller.ai/v1/craft_apps/release_info",
+            "http://publikhq.com/api/v1/craft/release_info",
+            "https://publikhq.com.evil.example/x",
+            "https://evilpublikhq.com/x",
+            "https://user@publikhq.com/x",
+            "https://publikhq.com:8443/x",
+            "https://.publikhq.com/x",
+            "https://publikhq.com/a b",
+        ] {
+            assert!(!is_publik_url(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_fork_is_only_the_fallback_and_is_asked_rarely() {
         let github = CountingGitHub::default();
         let shared = shared();
         let photo = CraftApp::by_id("photocraft").unwrap();
         let word = CraftApp::by_id("wordcraft").unwrap();
         let feed = feed();
+        let asked = || github.0.load(Ordering::SeqCst);
 
-        // The feed vouches for PhotoCraft: GitHub isn't asked.
-        let (latest, _, used) = latest_for(photo, Some(&feed), LOADED, &github, &shared, false, false, NOW);
-        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0"));
-        assert_eq!(used, Some(Source::Feed));
-        assert_eq!(github.0.load(Ordering::SeqCst), 0);
+        // publik's feed vouches for PhotoCraft: GitHub isn't asked.
+        let (latest, from, used) = release_for(photo, Some(&feed), LOADED, &github, &shared, Some(MAC), false, false, NOW);
+        assert!(matches!(latest, Some(LatestRelease::Found(ref r)) if r.tag == "v0.6.0-publik.1" && r.is_publik()));
+        assert_eq!((from, used), (Origin::Publik, Some(Source::Feed)));
+        assert_eq!(asked(), 0);
 
-        // The feed doesn't list WordCraft: GitHub is asked once…
-        let (_, _, used) = latest_for(word, Some(&feed), LOADED, &github, &shared, false, false, NOW);
-        assert_eq!(used, Some(Source::GitHubApi));
-        assert_eq!(github.0.load(Ordering::SeqCst), 1);
+        // The feed doesn't list WordCraft: the fork is asked once…
+        let (_, from, used) = release_for(word, Some(&feed), LOADED, &github, &shared, Some(MAC), false, false, NOW);
+        assert_eq!((from, used), (Origin::GitHub, Some(Source::GitHubApi)));
+        assert_eq!(asked(), 1);
         // …not again within the hour…
-        let (_, _, used) = latest_for(word, Some(&feed), LOADED, &github, &shared, false, false, NOW + 30 * 60);
+        let (_, _, used) = release_for(word, Some(&feed), LOADED, &github, &shared, Some(MAC), false, false, NOW + 30 * 60);
         assert_eq!(used, None);
-        assert_eq!(github.0.load(Ordering::SeqCst), 1);
+        assert_eq!(asked(), 1);
         // …but Refresh asks right away, and an hour later it's due again.
-        latest_for(word, Some(&feed), LOADED, &github, &shared, false, true, NOW + 31 * 60);
-        assert_eq!(github.0.load(Ordering::SeqCst), 2);
-        latest_for(word, Some(&feed), LOADED, &github, &shared, false, false, NOW + 31 * 60 + GITHUB_FALLBACK_EVERY);
-        assert_eq!(github.0.load(Ordering::SeqCst), 3);
+        release_for(word, Some(&feed), LOADED, &github, &shared, Some(MAC), false, true, NOW + 31 * 60);
+        assert_eq!(asked(), 2);
+        release_for(word, Some(&feed), LOADED, &github, &shared, Some(MAC), false, false, NOW + 31 * 60 + GITHUB_FALLBACK_EVERY);
+        assert_eq!(asked(), 3);
 
-        // No feed answer at all (server down): GitHub, still rate-limited per app.
-        let (_, _, used) = latest_for(photo, None, LOADED, &github, &shared, false, false, NOW);
+        // No feed answer at all (server down): the fork, still rate-limited per app.
+        let (_, _, used) = release_for(photo, None, LOADED, &github, &shared, Some(MAC), false, false, NOW);
         assert_eq!(used, Some(Source::GitHubApi));
-        assert_eq!(github.0.load(Ordering::SeqCst), 4);
+        assert_eq!(asked(), 4);
 
-        // A feed entry more than a day old doesn't count.
-        let fresh_shared = super::tests::shared();
-        let (_, _, used) = latest_for(photo, Some(&feed), LOADED, &github, &fresh_shared, false, false, NOW + 2 * 86_400);
-        assert_eq!(used, Some(Source::GitHubApi));
+        // A feed entry more than a day old, or one that isn't a publik build, doesn't count.
+        let deck = CraftApp::by_id("deckcraft").unwrap();
+        for (app, at) in [(photo, NOW + 2 * 86_400), (deck, NOW)] {
+            let (_, _, used) = release_for(app, Some(&feed), LOADED, &github, &super::tests::shared(), Some(MAC), false, false, at);
+            assert_eq!(used, Some(Source::GitHubApi), "{}", app.id);
+        }
+        assert_eq!(asked(), 6);
+
+        // A feed that has seriously failed isn't trusted, however fresh its entries look.
+        let distrusted = Fallback { trust_feed: false, ..LOADED };
+        let (_, from, _) = release_for(photo, Some(&feed), distrusted, &github, &super::tests::shared(), Some(MAC), false, false, NOW);
+        assert_eq!(from, Origin::GitHub);
+    }
+
+    #[test]
+    fn a_feed_build_with_nothing_for_this_computer_is_no_release() {
+        let github = CountingGitHub::default();
+        let photo = CraftApp::by_id("photocraft").unwrap();
+        // publik's PhotoCraft is macOS-only: on Windows there's no release, and nothing else is asked.
+        let windows = Platform { os: Os::Windows, arch: Arch::X64 };
+        let (latest, from, _) = release_for(photo, Some(&feed()), LOADED, &github, &shared(), Some(windows), false, true, NOW);
+        assert_eq!((latest, from), (Some(LatestRelease::None), Origin::Publik));
+        assert_eq!(github.0.load(Ordering::SeqCst), 0);
     }
 
     const APP: &str = "photocraft";
@@ -1478,7 +1490,7 @@ mod tests {
     fn a_check_that_finds_a_newer_release_ends_the_retry_offer() {
         struct Newer;
         impl ReleaseSource for Newer {
-            fn latest(&self, repo: &str, _prereleases: bool) -> crate::source::Answer {
+            fn publik(&self, repo: &str, _prereleases: bool) -> crate::source::Answer {
                 let found = CraftApp::by_id(APP).is_some_and(|a| a.repo == repo);
                 let latest = if found { LatestRelease::Found(release("0.6.0")) } else { LatestRelease::None };
                 crate::source::Answer { latest, source: Source::GitHubApi }
@@ -1494,7 +1506,7 @@ mod tests {
         let Some(platform) = native_platform() else { return };
         let dir = tempfile::tempdir().unwrap();
         let mut backend = backend(dir.path(), platform, Some(Arc::new(Newer)));
-        // A check needs a client; with pre-releases on it asks only `Newer`, never ArtCraft's API.
+        // A check needs a client; with pre-releases on it asks only `Newer`, never the feed.
         backend.http = Some(Http::new().unwrap());
         backend.shared.options.lock().unwrap().prereleases = true;
         keep_file(&backend);
@@ -1606,8 +1618,8 @@ mod tests {
         assert!(!restarting.load(Ordering::SeqCst));
     }
 
-    /// GitHub with publik's forks: `publik` answers from `forks` (by fork repo), `latest` has
-    /// ArtCraft's 0.7.0 for every repo. Both note what they were asked.
+    /// GitHub with publik's forks: `publik` answers from `forks` (by fork repo), noting what it
+    /// was asked.
     #[derive(Default)]
     struct Forked {
         forks: HashMap<String, LatestRelease>,
@@ -1615,11 +1627,6 @@ mod tests {
     }
 
     impl ReleaseSource for Forked {
-        fn latest(&self, repo: &str, _pre: bool) -> Answer {
-            self.asked.lock().unwrap().push(repo.to_string());
-            let r = artcraft_launcher_core::release::release_from_sums(repo, "v0.7.0", &[]);
-            Answer { latest: LatestRelease::Found(r), source: Source::GitHubApi }
-        }
         fn publik(&self, repo: &str, _pre: bool) -> Answer {
             self.asked.lock().unwrap().push(format!("publik {repo}"));
             Answer { latest: self.forks.get(repo).cloned().unwrap_or(LatestRelease::None), source: Source::GitHubApi }
@@ -1646,7 +1653,7 @@ mod tests {
     const HOUR: i64 = 3600;
 
     #[test]
-    fn a_publik_build_comes_first_and_artcraft_is_the_fallback() {
+    fn only_publik_builds_are_offered() {
         let forks = HashMap::from([
             (
                 "Blueturboguy07/gridcraft".to_string(),
@@ -1662,8 +1669,8 @@ mod tests {
         let shared = shared();
         let grid = CraftApp::by_id("gridcraft").unwrap();
         // GridCraft: publik's build, from publik's fork, with its checksums.
-        let Some((Some(LatestRelease::Found(r)), Origin::GitHub, Some(Source::GitHubApi))) =
-            publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW)
+        let (Some(LatestRelease::Found(r)), Origin::GitHub, Some(Source::GitHubApi)) =
+            release_for(grid, None, LOADED, &source, &shared, Some(MAC), false, false, NOW)
         else {
             panic!("no publik build")
         };
@@ -1674,33 +1681,56 @@ mod tests {
         assert_eq!(asset.url, "https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.1/gridcraft-0.8.0-macos-universal.dmg");
         assert!(asset.sha256.is_some());
         assert_eq!(r.sums_asset().unwrap().url, "https://github.com/Blueturboguy07/gridcraft/releases/download/v0.8.0-publik.1/SHA256SUMS.txt");
-        // publik's build has nothing for Windows: ArtCraft's release decides there.
-        assert_eq!(publik_latest(grid, &source, &shared, Some(Platform { os: Os::Windows, arch: Arch::X64 }), HOUR, false, true, NOW), None);
-        // PhotoCraft's fork has no publik build, and WordCraft's couldn't be asked: both fall back
-        // to ArtCraft's release, from the feed or from storytold on GitHub, as before.
+        // publik's build has nothing for Windows: no release there, never ArtCraft's.
+        let windows = Platform { os: Os::Windows, arch: Arch::X64 };
+        assert_eq!(release_for(grid, None, LOADED, &source, &shared, Some(windows), false, true, NOW).0, Some(LatestRelease::None));
+        // PhotoCraft's fork has no publik build: no release. WordCraft's couldn't be asked: says so.
         let photo = CraftApp::by_id("photocraft").unwrap();
-        assert_eq!(publik_latest(photo, &source, &shared, Some(MAC), HOUR, false, false, NOW), None);
-        let (Some(LatestRelease::Found(r)), Origin::ArtCraftApi, _) = latest_for(photo, Some(&feed()), LOADED, &source, &shared, false, false, NOW)
-        else {
-            panic!("no fallback")
-        };
-        assert_eq!(r.tag, "v0.6.0");
+        assert_eq!(release_for(photo, None, LOADED, &source, &shared, Some(MAC), false, false, NOW).0, Some(LatestRelease::None));
         let word = CraftApp::by_id("wordcraft").unwrap();
-        let (Some(LatestRelease::Found(r)), Origin::GitHub, _) =
-            release_for(word, Some(&feed()), LOADED, &source, &shared, Some(MAC), false, false, NOW)
-        else {
-            panic!("no fallback")
+        assert_eq!(release_for(word, None, LOADED, &source, &shared, Some(MAC), false, false, NOW).0, Some(LatestRelease::Failed("offline".into())));
+        // Every Craft App and the launcher: only publik's forks are ever asked.
+        for app in SUITE.iter().chain([&LAUNCHER]) {
+            release_for(app, Some(&feed()), LOADED, &source, &shared, Some(MAC), false, true, NOW);
+        }
+        let asked = source.asked.lock().unwrap().clone();
+        assert!(asked.iter().all(|a| a.starts_with("publik Blueturboguy07/")), "{asked:?}");
+        // The forks are asked as rarely as before.
+        let count = |repo: &str| source.asked.lock().unwrap().iter().filter(|a| *a == repo).count();
+        let before = count("publik Blueturboguy07/gridcraft");
+        let (latest, _, used) = release_for(grid, None, LOADED, &source, &shared, Some(MAC), false, false, NOW + 60);
+        assert_eq!((latest, used), (None, None), "nothing saved to show, and not due");
+        assert_eq!(count("publik Blueturboguy07/gridcraft"), before);
+        assert!(release_for(grid, None, LOADED, &source, &shared, Some(MAC), false, false, NOW + HOUR).0.is_some());
+        assert_eq!(count("publik Blueturboguy07/gridcraft"), before + 1);
+    }
+
+    #[test]
+    fn a_later_publik_build_of_the_same_version_is_offered_as_an_update() {
+        use artcraft_launcher_core::status::{AppStatus, Latest, status};
+        let grid = CraftApp::by_id("gridcraft").unwrap();
+        let fork = "Blueturboguy07/gridcraft";
+        let build2 = publik_build(fork, "v0.8.0-publik.2", &["gridcraft-0.8.0-macos-universal.dmg"]);
+        let source = Forked { forks: HashMap::from([(fork.to_string(), build2)]), ..Default::default() };
+        let (Some(LatestRelease::Found(r)), ..) = release_for(grid, None, LOADED, &source, &shared(), Some(MAC), false, true, NOW) else {
+            panic!("no publik build")
         };
-        assert_eq!(r.html_url, "https://github.com/storytold/wordcraft/releases/tag/v0.7.0");
-        assert!(!r.is_publik());
-        assert_eq!(source.asked.lock().unwrap().iter().filter(|a| *a == "publik Blueturboguy07/wordcraft").count(), 1);
-        // The forks are asked as rarely as GitHub is for the fallback.
-        let asked = |repo: &str| source.asked.lock().unwrap().iter().filter(|a| *a == repo).count();
-        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 2, "once, and once more when forced");
-        assert!(publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW + 60).is_none(), "nothing saved to show");
-        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 2);
-        assert!(publik_latest(grid, &source, &shared, Some(MAC), HOUR, false, false, NOW + HOUR).is_some());
-        assert_eq!(asked("publik Blueturboguy07/gridcraft"), 3);
+        let latest = r.version.clone().unwrap();
+        assert_eq!(latest.to_string(), "0.8.0+publik.2");
+        let installed = |v: &str| Installed { version: version::parse(v), source: InstallSource::MacApp, location: String::new(), package: None };
+        // Build 1 as the launcher recorded it, or publik's bundle whose build number isn't known.
+        for older in ["0.8.0+publik.1", "0.8.0+publik"] {
+            let found = Latest::Found { version: Some(&latest), has_asset: true };
+            assert_eq!(status(Some(&installed(older)), found), AppStatus::UpdateAvailable, "{older}");
+        }
+        // Build 2 itself is up to date, and so is the same version from a platform that only
+        // records the numbers.
+        for current in ["0.8.0+publik.2", "0.8.0"] {
+            let found = Latest::Found { version: Some(&latest), has_asset: true };
+            assert_eq!(status(Some(&installed(current)), found), AppStatus::UpToDate, "{current}");
+        }
+        // Once build 2 is in, the update counts as landed.
+        assert!(landed(Some(&installed("0.8.0+publik.1")), Some(&installed("0.8.0+publik.2")), &latest));
     }
 
     #[test]
@@ -1710,15 +1740,15 @@ mod tests {
             forks: HashMap::from([(fork.to_string(), publik_build(fork, "v9.0.0-publik.1", &["artcraft-launcher-9.0.0-macos-universal.dmg"]))]),
             ..Default::default()
         };
-        let Some((Some(LatestRelease::Found(r)), ..)) = publik_latest(&LAUNCHER, &source, &shared(), Some(MAC), HOUR, false, false, NOW) else {
+        let (Some(LatestRelease::Found(r)), ..) = publik_latest(&LAUNCHER, &source, &shared(), Some(MAC), HOUR, false, false, NOW) else {
             panic!("no publik build of the launcher")
         };
         assert_eq!(source.asked.lock().unwrap().as_slice(), [format!("publik {fork}")]);
         assert!(r.is_publik() && r.html_url.starts_with("https://github.com/Blueturboguy07/craft-launcher/"));
         let current = crate::self_update::current_version().unwrap();
         assert!(version::is_newer(r.version.as_ref().unwrap(), &current));
-        // The same version as this one, rebuilt by publik, is not an update.
-        let same = format!("v{current}-publik.3");
+        // The same build as this one is not an update.
+        let same = format!("v{}-publik.{}", version::label(&current), version::publik_number(&current).unwrap_or(1));
         let rebuilt = artcraft_launcher_core::release::publik_tag(&same).unwrap();
         assert!(!version::is_newer(&rebuilt, &current));
         let (Some(LatestRelease::Found(r)), ..) = release_for(&LAUNCHER, None, LOADED, &source, &shared(), Some(MAC), false, false, NOW) else {
@@ -1730,22 +1760,18 @@ mod tests {
     #[test]
     fn without_a_publik_build_the_launcher_offers_no_update() {
         let fork = "Blueturboguy07/craft-launcher";
-        // No publik release at all; a newer storytold launcher exists (every `latest` finds one).
+        // No publik release at all.
         let none = Forked::default();
-        assert_eq!(release_for(&LAUNCHER, None, LOADED, &none, &shared(), Some(MAC), false, true, NOW), (None, Origin::GitHub, None));
+        assert_eq!(release_for(&LAUNCHER, None, LOADED, &none, &shared(), Some(MAC), false, true, NOW).0, Some(LatestRelease::None));
         // A publik build with nothing for this platform; the fork couldn't be asked.
         let windows_only = publik_build(fork, "v9.0.0-publik.1", &["artcraft-launcher-9.0.0-windows-x64.msi"]);
         for answer in [windows_only, LatestRelease::Failed("offline".into()), LatestRelease::None] {
             let source = Forked { forks: HashMap::from([(fork.to_string(), answer.clone())]), ..Default::default() };
-            assert_eq!(
-                release_for(&LAUNCHER, None, LOADED, &source, &shared(), Some(MAC), false, true, NOW),
-                (None, Origin::GitHub, None),
-                "{answer:?}"
-            );
-            // storytold's launcher repo is never asked.
+            let (latest, ..) = release_for(&LAUNCHER, None, LOADED, &source, &shared(), Some(MAC), false, true, NOW);
+            assert!(!matches!(latest, Some(LatestRelease::Found(_))), "{answer:?}");
+            // Only publik's fork is asked.
             assert_eq!(source.asked.lock().unwrap().as_slice(), [format!("publik {fork}")], "{answer:?}");
         }
-        assert!(none.asked.lock().unwrap().iter().all(|a| !a.contains("storytold")));
     }
 
     #[test]

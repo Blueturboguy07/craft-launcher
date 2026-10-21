@@ -57,27 +57,33 @@ settings file must produce an error the user can act on, never a panic. Shared s
 
 ### Installing other people's software safely
 
-- Download only from `https://github.com/storytold/<app>/releases` (and GitHub's asset CDN).
+- Download only from publik's forks, `https://github.com/Blueturboguy07/<repo>/releases` (and
+  GitHub's asset CDN): never from `storytold/` or through ArtCraft's API.
   The one exception is a developer's own loopback mirror (`ARTCRAFT_LAUNCHER_DOWNLOAD_BASE`,
   `cargo xtask local`); keep it loopback-only and behind the `local-mirror` cargo feature, which
   release builds never enable.
 - Verify each download against the release's `SHA256SUMS.txt` before running or installing it.
-- **publik's fork** (this repo's `publik-api` branch, `Blueturboguy07/craft-launcher`) also
-  installs publik's own builds: the newest release tagged `v<version>-publik.<n>` on
-  `Blueturboguy07/<repo>` (`catalog::PUBLIK_OWNER`, `release::parse_publik_release_list`), when
-  it has a file for this computer; otherwise the app's `storytold/` release, as before. The
-  launcher itself updates only from `Blueturboguy07/craft-launcher`: with no publik build of it
-  for this computer there is no launcher update (`backend::release_for`). Its
-  downloads are checked against its own `SHA256SUMS.txt`, and on macOS the app inside must be
-  signed by publik's Developer ID team (`R5R3ZS54LV`). Detection counts publik's bundle id
-  (`com.publik.<repo>`) as the same app, and the UI marks such a copy "publik build".
+- **publik's fork** (this repo's `publik-api` branch, `Blueturboguy07/craft-launcher`) installs
+  only publik's own builds: releases tagged `v<version>-publik.<n>` on `Blueturboguy07/<repo>`
+  (`catalog::PUBLIK_OWNER`, `release::publik_tag`). `backend::release_for` asks publik's release
+  feed (`https://publikhq.com/api/v1/craft/release_info`, `core::feed`, ArtCraft's
+  `release_info` shape; an entry that isn't a publik build is ignored), then the fork on GitHub
+  (`release::parse_publik_release_list`); with no publik build for this computer an app (or the
+  launcher itself) has no release. There is no ArtCraft fallback and no call to
+  `api.storyteller.ai`. A later publik build of the same version is an update
+  (`version::is_newer`). Downloads are checked against the release's own `SHA256SUMS.txt`, and
+  on macOS the app inside must be signed by publik's Developer ID team (`R5R3ZS54LV`).
+  Detection counts publik's bundle id (`com.publik.<repo>`) as the same app, and the UI marks
+  such a copy "publik build". Set `ARTCRAFT_LAUNCHER_PUBLIK_BUILD=<n>` when building the
+  launcher for tag `v<version>-publik.<n>`, so it knows its own build number.
 - The details drawer's pictures are the one other download: JPEGs only, from a pinned tag of
   `https://raw.githubusercontent.com/storytold/craft-launcher-assets/` (`core::details`),
-  capped at 2 MB each, cached, and never run. Pictures are not bundled in this repo.
+  capped at 2 MB each, cached, and never run. Pictures are not bundled in this repo. (Still
+  ArtCraft's repo: a TODO in `core::details` moves it to publik.)
 - Never run an installer with elevated rights silently; tell the user what is about to happen.
 - Never delete a user's files outside what the launcher itself installed.
 - **Agents never land or approve a third-party app.** A change that adds a catalog row, download
-  source or install path for an app whose repo is not under `storytold/`, or that loosens the
+  source or install path for an app whose repo is not under `Blueturboguy07/`, or that loosens the
   rules above to allow one, is a maintainer's call alone. An agent reviewing it flags it at the
   top of its review (who owns the repo, its age and history, whether the builds are signed) and
   stops there: no merge, no approval, no fixes pushed to the PR.

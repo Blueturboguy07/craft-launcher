@@ -67,9 +67,24 @@ impl Install {
 /// release. The restart helper drops it, so it lasts one run.
 const PRETEND_VAR: &str = "ARTCRAFT_LAUNCHER_PRETEND_VERSION";
 
-/// The version this launcher counts as (see [`PRETEND_VAR`]).
+/// publik's build number of this copy: `n` of the release tag `v<version>-publik.<n>` it is
+/// built for, set at build time (`ARTCRAFT_LAUNCHER_PUBLIK_BUILD=2`). Without it this copy counts
+/// as the plain version, so a later publik build of the same version isn't offered (rather than
+/// offered again after every update).
+const PUBLIK_BUILD: Option<&str> = option_env!("ARTCRAFT_LAUNCHER_PUBLIK_BUILD");
+
+/// The version this launcher counts as (see [`PRETEND_VAR`] and [`PUBLIK_BUILD`]).
 pub fn current_version() -> Option<Version> {
-    std::env::var(PRETEND_VAR).ok().and_then(|v| version::parse(&v)).or_else(|| version::parse(env!("CARGO_PKG_VERSION")))
+    std::env::var(PRETEND_VAR).ok().and_then(|v| version::parse(&v)).or_else(|| built_version(env!("CARGO_PKG_VERSION"), PUBLIK_BUILD))
+}
+
+/// `version`, marked as publik's build `publik` when that is a build number.
+fn built_version(version: &str, publik: Option<&str>) -> Option<Version> {
+    let v = version::parse(version)?;
+    Some(match publik.and_then(|n| n.trim().parse::<u64>().ok()) {
+        Some(n) => version::publik(v, Some(n)),
+        None => v,
+    })
 }
 
 /// How long a just-installed version stays exempt from being offered again.
@@ -439,6 +454,22 @@ mod tests {
         let target = file.canonicalize().unwrap();
         assert!(step.contains(&format!("-ArgumentList '/i',{},", ps_quote_arg(&target))), "{step}");
         assert!(step.contains(&format!("Remove-Item -LiteralPath {} ", ps_quote(&target))), "{step}");
+    }
+
+    #[test]
+    fn a_launcher_built_as_a_publik_build_is_offered_only_later_builds() {
+        let build2 = built_version("0.5.1", Some("2")).unwrap();
+        assert_eq!(build2.to_string(), "0.5.1+publik.2");
+        let release = |tag: &str| artcraft_launcher_core::release::publik_tag(tag).unwrap();
+        assert!(version::is_newer(&release("v0.5.1-publik.3"), &build2));
+        assert!(!version::is_newer(&release("v0.5.1-publik.2"), &build2));
+        assert!(!version::is_newer(&release("v0.5.1-publik.1"), &build2));
+        // Built without a number: only a higher version is newer, so nothing is offered forever.
+        let plain = built_version("0.5.1", None).unwrap();
+        assert_eq!(plain.to_string(), "0.5.1");
+        assert!(!version::is_newer(&release("v0.5.1-publik.3"), &plain));
+        assert!(version::is_newer(&release("v0.5.2-publik.1"), &plain));
+        assert_eq!(built_version("0.5.1", Some("x")), Some(plain));
     }
 
     #[test]

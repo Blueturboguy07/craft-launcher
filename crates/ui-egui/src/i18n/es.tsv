@@ -328,7 +328,7 @@ filter	Installed	Instaladas
 @id	appearance.theme	Apariencia
 	Show ArtCraft Launcher	Mostrar ArtCraft Launcher
 	Check for Updates	Buscar actualizaciones
-	Visit getartcraft.com	Visitar getartcraft.com
+	Visit publikhq.com	Visitar publikhq.com
 	ArtCraft on GitHub	ArtCraft en GitHub
 	Join the ArtCraft Discord	Únete al Discord de ArtCraft
 @plural	ArtCraft Launcher · {n} update available|ArtCraft Launcher · {n} updates available	ArtCraft Launcher · {n} actualización disponible|ArtCraft Launcher · {n} actualizaciones disponibles

@@ -37,14 +37,15 @@ impl Paths {
         self.cache.join("releases.json")
     }
 
-    /// The last answer from ArtCraft's release feed, for an instant first paint and as a fallback.
+    /// The last answer from publik's release feed, for an instant first paint and as a fallback.
+    /// Not `feed.json`, where older launchers kept ArtCraft's feed: that one is never read.
     pub fn feed_cache(&self) -> PathBuf {
-        self.cache.join("feed.json")
+        self.cache.join("publik-feed.json")
     }
 
-    /// How long to hold off calling ArtCraft's API (after failures or HTTP 429), across restarts.
+    /// How long to hold off calling publik's feed (after failures or HTTP 429), across restarts.
     pub fn feed_throttle(&self) -> PathBuf {
-        self.cache.join("feed-throttle.json")
+        self.cache.join("publik-feed-throttle.json")
     }
 
     /// A picture of an app's details page, saved after its first download: under the revision of the

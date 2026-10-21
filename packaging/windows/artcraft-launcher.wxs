@@ -44,9 +44,9 @@
     <!-- MSI caches this icon using its Id as the filename; keep the .exe extension (ICE50). -->
     <Icon Id="ArtCraftLauncherIcon.exe" SourceFile="$(var.IconPath)" />
     <Property Id="ARPPRODUCTICON" Value="ArtCraftLauncherIcon.exe" />
-    <Property Id="ARPURLINFOABOUT" Value="https://getartcraft.com/apps" />
+    <Property Id="ARPURLINFOABOUT" Value="https://publikhq.com/adobe" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/storytold/craft-launcher/releases" />
-    <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
+    <Property Id="ARPHELPLINK" Value="https://publikhq.com/adobe" />
 
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="LocalProgramsFolder" Name="Programs">

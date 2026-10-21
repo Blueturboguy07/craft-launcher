@@ -350,7 +350,7 @@ filter	Installed	インストール済み
 # Tray (menu bar) menu and tooltip
 	Show ArtCraft Launcher	ArtCraft Launcher を表示
 	Check for Updates	更新を確認
-	Visit getartcraft.com	getartcraft.com を開く
+	Visit publikhq.com	publikhq.com を開く
 	ArtCraft on GitHub	GitHub の ArtCraft
 	Join the ArtCraft Discord	ArtCraft Discord に参加
 @plural	ArtCraft Launcher · {n} update available|ArtCraft Launcher · {n} updates available	ArtCraft Launcher · {n} 件の更新があります

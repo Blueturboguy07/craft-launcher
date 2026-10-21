@@ -4,7 +4,7 @@
 //!   ones whose version isn't in the mirror yet, and files the results under
 //!   `<mirror>/<app>/<version>/` with a `SHA256SUMS.txt`.
 //! - `serve` serves the mirror on 127.0.0.1 and answers `release_info.json` with a feed (the same
-//!   shape as ArtCraft's) written fresh from whatever is in the mirror at that moment.
+//!   shape as publik's) written fresh from whatever is in the mirror at that moment.
 //!
 //! Run the launcher with `ARTCRAFT_LAUNCHER_DOWNLOAD_BASE=http://127.0.0.1:<port>/` and it installs
 //! and updates from the mirror alone.
@@ -186,7 +186,7 @@ fn sync(o: &Opts) -> Result<(), String> {
 fn sync_one(o: &Opts, id: &str, name: &str) -> Result<Outcome, String> {
     let repo = o.root.join(id);
     if !repo.join(".git").exists() {
-        return Ok(Outcome::Skipped(format!("no checkout at {} (git clone git@github.com:storytold/{id}.git)", repo.display())));
+        return Ok(Outcome::Skipped(format!("no checkout at {} (git clone git@github.com:Blueturboguy07/{id}.git)", repo.display())));
     }
     let mut pull_note = String::new();
     if o.pull {
@@ -423,7 +423,9 @@ fn sha256(path: &Path) -> Result<String, String> {
 
 // ---- feed ---------------------------------------------------------------------------------------
 
-/// A feed (ArtCraft's `release_info` shape) for the newest complete version of every app.
+/// A feed (publik's `release_info` shape) for the newest complete version of every app. The
+/// launcher installs only publik's builds, so each is listed as publik build 1 of its version
+/// (`v<version>-publik.1`) in publik's fork.
 fn feed(mirror: &Path, base: &str) -> String {
     let now = rfc3339(unix_now());
     let mut apps = String::new();
@@ -454,8 +456,8 @@ fn feed(mirror: &Path, base: &str) -> String {
             r#"{}:{{"name":{},"repo":{},"latest_release":{{"tag":{},"name":{},"published_at":{},"html_url":"","prerelease":false,"notes_markdown":{},"assets":[{}]}},"app_last_fetched":{}}}"#,
             json_str(id),
             json_str(name),
-            json_str(&format!("storytold/{id}")),
-            json_str(&format!("v{version}")),
+            json_str(&format!("Blueturboguy07/{id}")),
+            json_str(&format!("v{version}-publik.1")),
             json_str(&format!("{name} v{version} (local build)")),
             json_str(&published),
             json_str(&notes),
@@ -710,7 +712,7 @@ mod tests {
         std::fs::write(dir.join(COMPLETE), "").unwrap();
         let json = feed(&mirror, "http://127.0.0.1:8787/");
         let _ = std::fs::remove_dir_all(&mirror);
-        assert!(json.contains(r#""tag":"v0.6.0""#), "{json}");
+        assert!(json.contains(r#""tag":"v0.6.0-publik.1""#) && json.contains(r#""repo":"Blueturboguy07/photocraft""#), "{json}");
         assert!(json.contains(r#""download_url":"http://127.0.0.1:8787/photocraft/0.6.0/photocraft-0.6.0-macos-aarch64.dmg""#));
         assert!(json.contains(r#""size_bytes":3"#) && json.contains(&"ab".repeat(32)));
         assert!(json.contains(r#"Built \"locally\".\n"#));

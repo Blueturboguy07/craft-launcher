@@ -6,8 +6,10 @@ use semver::BuildMetadata;
 pub use semver::Version;
 
 /// The build metadata that marks publik's own build of an app: `0.8.0+publik.1` for release
-/// `v0.8.0-publik.1`, `0.8.0+publik` for an installed copy (its build number isn't recorded).
-/// Build metadata never affects ordering, so publik's 0.8.0 is the same version as ArtCraft's.
+/// `v0.8.0-publik.1`, `0.8.0+publik` for an installed copy whose build number isn't known.
+/// Between two publik builds of the same version the higher build number is newer, and a known
+/// number is newer than an unknown one ([`is_newer`]). Otherwise build metadata never affects
+/// ordering, so publik's 0.8.0 is the same version as a plain 0.8.0.
 pub const PUBLIK: &str = "publik";
 
 /// Reads a version from a tag or an installed-version string.
@@ -141,9 +143,15 @@ pub fn compare(a: &Version, b: &Version) -> Ordering {
     a.cmp_precedence(b)
 }
 
-/// True when `latest` is newer than `installed`.
+/// True when `latest` is newer than `installed`: a higher version, or a later publik build of the
+/// same version (`0.8.0+publik.2` over `0.8.0+publik.1`, and over `0.8.0+publik`, whose build
+/// number isn't known). A publik build and a plain copy of the same version are the same: a
+/// platform that records only `X.Y.Z` (an MSI, a system package) can't say which it has.
 pub fn is_newer(latest: &Version, installed: &Version) -> bool {
-    compare(latest, installed) == Ordering::Greater
+    match compare(latest, installed) {
+        Ordering::Equal => is_publik(latest) && is_publik(installed) && publik_number(latest) > publik_number(installed),
+        order => order == Ordering::Greater,
+    }
 }
 
 /// Platforms that only record `X.Y.Z` (the MSI ProductVersion, `CFBundleShortVersionString`)
@@ -227,12 +235,34 @@ mod tests {
         for other in ["0.8.0", "0.8.0+abc", "0.8.0+publikx", "0.8.0+publik.x", "0.8.0-publik.1"] {
             assert!(!is_publik(&v(other)), "{other}");
         }
-        // The same numbers, whoever built them: not an update either way.
+        // A publik build and a plain copy of the same numbers: not an update either way.
         assert!(!is_update(&release, &v("0.8.0")) && !is_update(&v("0.8.0"), &installed));
         assert!(is_update(&release, &v("0.7.0")) && is_update(&v("0.9.0"), &installed));
+        // A higher version still wins over any build number.
+        assert!(!is_update(&publik(v("0.7.0"), Some(9)), &publik(v("0.8.0"), Some(1))));
         // The UI shows the numbers; the mark is shown as words.
         assert_eq!(label(&release), "0.8.0");
         assert_eq!(label(&publik(v("0.3.0-rc.1"), Some(1))), "0.3.0-rc.1");
         assert_eq!(label(&v("0.2.0+abc")), "0.2.0+abc");
+    }
+
+    #[test]
+    fn a_later_publik_build_of_the_same_version_is_an_update() {
+        let build = |n| publik(v("0.8.0"), n);
+        // publik build 2 is offered over build 1 and over a copy whose build number isn't known.
+        assert!(is_update(&build(Some(2)), &build(Some(1))));
+        assert!(is_update(&build(Some(2)), &build(None)));
+        assert!(is_newer(&build(Some(2)), &build(Some(1))));
+        // Read back from a tag, as the release feed and the fork give it.
+        assert!(is_update(&v("0.8.0+publik.2"), &v("0.8.0+publik.1")));
+        // Not the other way round, and not the same build again.
+        assert!(!is_update(&build(Some(1)), &build(Some(2))));
+        assert!(!is_update(&build(Some(2)), &build(Some(2))));
+        assert!(!is_update(&build(None), &build(Some(1))));
+        assert!(!is_update(&build(None), &build(None)));
+        // Other build metadata is not a build number.
+        assert!(!is_update(&v("0.8.0+abc.2"), &v("0.8.0+abc.1")));
+        // Pre-releases follow the same rule.
+        assert!(is_update(&publik(v("0.9.0-rc.1"), Some(3)), &publik(v("0.9.0-rc.1"), Some(2))));
     }
 }

@@ -14,7 +14,7 @@ use crate::model::AppEntry;
 /// publik's own build. Empty when nothing is known yet.
 pub(crate) fn strip_version(e: &AppEntry, status: &AppStatus) -> String {
     let installed = e.installed.as_ref().and_then(|i| i.version.as_ref().map(version::label));
-    let latest = e.latest_label();
+    let latest = e.latest_label_beside(installed.as_deref());
     let text = match (status, installed.as_deref(), latest.as_deref()) {
         (AppStatus::UpdateAvailable, Some(i), Some(l)) => format!("{i} → {l}"),
         (_, Some(i), _) => format!("v{i}"),
