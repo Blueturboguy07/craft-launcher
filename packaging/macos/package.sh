@@ -43,6 +43,12 @@ esac
 export MACOSX_DEPLOYMENT_TARGET=11.0
 IDENTITY="${MACOS_SIGN_IDENTITY:--}"
 SHORT_VERSION="${VERSION%%-*}"
+# publik's build number (packaging/PUBLIK_BUILD, or PUBLIK_BUILD in the environment) marks the
+# bundle's <App>Version as X.Y.Z+publik.N, so the launcher knows which build is installed.
+PUBLIK_BUILD="${PUBLIK_BUILD:-$(tr -d '[:space:]' < "$HERE/../PUBLIK_BUILD" 2>/dev/null || true)}"
+FULL_VERSION="$VERSION${PUBLIK_BUILD:+"+publik.$PUBLIK_BUILD"}"
+# The launcher reports the same build from `--version` and counts itself as that build.
+if [ -n "$PUBLIK_BUILD" ]; then export ARTCRAFT_LAUNCHER_PUBLIK_BUILD="$PUBLIK_BUILD"; fi
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/$APP_NAME.app"
 DMG="$DIST/$PKG-$VERSION-macos-$ARCH.dmg"
@@ -113,7 +119,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
 cp "$WORK/bin/$PKG" "$APP/Contents/MacOS/$APP_NAME"
 cp "$ROOT/assets/app-icon/$PKG.icns" "$APP/Contents/Resources/$APP_NAME.icns"
-sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
+sed -e "s/@VERSION@/$FULL_VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${ARTCRAFT_LAUNCHER_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"

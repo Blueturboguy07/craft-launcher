@@ -186,12 +186,13 @@ pub mod macos {
         if id != app.bundle_id() && !publik {
             return None;
         }
-        // `<App>Version` carries the full version including a pre-release suffix;
-        // CFBundleShortVersionString only has the numbers.
-        let full_key = format!("{}Version", app.name);
+        // `<App>Version` carries the full version: a pre-release suffix, and in publik's bundles
+        // the build number (`0.9.0+publik.3`); CFBundleShortVersionString only has the numbers.
+        let full_key = format!("{}Version", app.name.replace(' ', ""));
         let text =
             [full_key.as_str(), "CFBundleShortVersionString", "CFBundleVersion"].iter().find_map(|k| dict.get(k).and_then(plist::Value::as_string));
-        let version = text.and_then(version::parse).map(|v| if publik { version::publik(v, None) } else { v });
+        // publik's bundle is publik's build even when it doesn't say which (build 1 and 2 didn't).
+        let version = text.and_then(version::parse).map(|v| if publik && version::publik_number(&v).is_none() { version::publik(v, None) } else { v });
         Some(Installed { version, source: InstallSource::MacApp, location: path.display().to_string(), package: None })
     }
 }
@@ -479,6 +480,12 @@ mod macos_tests {
 
     /// A minimal `GridCraft.app` in `dir` with bundle id `id`, reporting 0.8.0.
     fn bundle(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+        bundle_with(dir, id, "0.8.0")
+    }
+
+    /// A minimal `GridCraft.app` in `dir` with bundle id `id`, whose `GridCraftVersion` is `full`
+    /// (the numbers alone, or with publik's build number as publik's packaging writes it).
+    fn bundle_with(dir: &std::path::Path, id: &str, full: &str) -> std::path::PathBuf {
         let app = dir.join(format!("{id}/GridCraft.app"));
         std::fs::create_dir_all(app.join("Contents")).unwrap();
         std::fs::write(
@@ -486,11 +493,36 @@ mod macos_tests {
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
                  <key>CFBundleIdentifier</key><string>{id}</string>\
-                 <key>CFBundleShortVersionString</key><string>0.8.0</string></dict></plist>"
+                 <key>CFBundleShortVersionString</key><string>0.8.0</string>\
+                 <key>GridCraftVersion</key><string>{full}</string></dict></plist>"
             ),
         )
         .unwrap();
         app
+    }
+
+    #[test]
+    fn a_publik_bundle_that_names_its_build_number_is_that_build() {
+        use artcraft_launcher_core::status::{AppStatus, Latest, status};
+        let dir = tempfile::tempdir().unwrap();
+        let grid = CraftApp::by_id("gridcraft").unwrap();
+        let installed = macos::read_bundle(grid, &bundle_with(dir.path(), "com.publik.gridcraft", "0.8.0+publik.3")).unwrap();
+        assert_eq!(installed.version.as_ref().map(ToString::to_string).as_deref(), Some("0.8.0+publik.3"));
+        // Against the release feed: build 3 itself is up to date, build 4 is an update, and a
+        // bundle that names no build is always offered the known one (build 1 and 2 never said).
+        let release = |tag: &str| artcraft_launcher_core::release::publik_tag(tag).unwrap();
+        let against = |installed: &Installed, tag: &str| {
+            let latest = release(tag);
+            status(Some(installed), Latest::Found { version: Some(&latest), has_asset: true })
+        };
+        assert_eq!(against(&installed, "v0.8.0-publik.3"), AppStatus::UpToDate);
+        assert_eq!(against(&installed, "v0.8.0-publik.4"), AppStatus::UpdateAvailable);
+        let unnumbered = macos::read_bundle(grid, &bundle_with(dir.path(), "com.publik.gridcraft", "0.8.0")).unwrap();
+        assert_eq!(unnumbered.version.as_ref().map(ToString::to_string).as_deref(), Some("0.8.0+publik"));
+        assert_eq!(against(&unnumbered, "v0.8.0-publik.3"), AppStatus::UpdateAvailable);
+        // ArtCraft's own bundle never counts as publik's build, whatever its key says.
+        let theirs = macos::read_bundle(grid, &bundle_with(dir.path(), "ai.storyteller.gridcraft", "0.8.0")).unwrap();
+        assert_eq!(theirs.version.as_ref().map(ToString::to_string).as_deref(), Some("0.8.0"));
     }
 
     #[test]
