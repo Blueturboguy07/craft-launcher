@@ -315,6 +315,15 @@ lot from them. Thank you to their authors:
 | [ArtCraft Hub Launcher](https://github.com/tinyplayerss/artcraft-hub-launcher) | [@tinyplayerss](https://github.com/tinyplayerss) | A friendly, one-window hub for the whole suite |
 | [CraftHub](https://github.com/MegaTheLEGEND/CraftHub) | [@MegaTheLEGEND](https://github.com/MegaTheLEGEND) | Serving the apps' web builds from a self-hosted launcher |
 
+## Usage counts
+
+publik's build of ArtCraft Launcher sends two anonymous usage events to publik: `app_opened` (one for
+each start of the launcher) and `active_session` (every 30 minutes while it runs, also in the tray).
+An event holds the app name, the launcher version, the operating system, the CPU type and a random
+install ID. It holds no file, no file name and no list of your apps. When this computer has a publik
+API key for the launcher, the event carries that key, so publik counts the account one time. To turn
+it off, set `DO_NOT_TRACK=1` in the environment. Details: https://publikhq.com/skills/telemetry.md
+
 ## License and credits
 
 ArtCraft Launcher is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

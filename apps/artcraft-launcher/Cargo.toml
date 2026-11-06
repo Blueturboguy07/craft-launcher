@@ -30,6 +30,9 @@ notify-rust = "4"
 # Cargo.lock through eframe's "persistence" feature.
 ron = "0.12.2"
 serde = { workspace = true }
+# publik's usage counts (src/publik_telemetry.rs) send with the HTTP crate the launcher has: the same
+# line as in artcraft-launcher-native, so Cargo.lock gets no new package.
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "_ring", "gzip", "platform-verifier"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"

@@ -13,6 +13,11 @@ mod spaces;
 #[cfg(target_os = "linux")]
 mod system_theme;
 mod tray;
+// publik's usage counts (README: Usage counts). The file is publik's reference client; only its HTTP
+// function is written for the launcher's own HTTP crate.
+#[rustfmt::skip]
+#[allow(clippy::all)]
+mod publik_telemetry;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -32,6 +37,12 @@ const APP_ID: &str = "ai.storyteller.artcraft-launcher";
 const SETTINGS_KEY: &str = "settings";
 
 type Wake = Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>;
+
+/// The version in publik's usage counts: the release tag without its `v`, for example `0.5.1-publik.4`.
+/// The build number comes from `packaging/PUBLIK_BUILD`, the file the bundle version comes from.
+fn publik_version() -> String {
+    format!("{}-publik.{}", env!("CARGO_PKG_VERSION"), include_str!("../../../packaging/PUBLIK_BUILD").trim())
+}
 
 fn main() -> ExitCode {
     // First, so the panic report and every start-up warning are recorded (`logging`).
@@ -54,6 +65,10 @@ fn main() -> ExitCode {
         Instance::Secondary => return ExitCode::SUCCESS,
         Instance::Primary(rx) => rx,
     };
+    // publik's usage counts: `app_opened` now, `active_session` every 30 minutes, on a background
+    // thread. After the early exits above, so `--version` and a second start (it only asks the
+    // running launcher to show its window) send nothing.
+    publik_telemetry::start("craft-launcher", &publik_version(), None);
     // The log file lives in the launcher's data folder (beside the executable in portable mode);
     // opened after the arguments (so `--version` leaves no file behind) and once this is the only
     // launcher running, so a second start doesn't rotate away the running one's log. Records

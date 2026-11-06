@@ -294,6 +294,7 @@ dependencies = [
  "ron",
  "serde",
  "tray-icon",
+ "ureq",
  "winreg",
  "winresource",
  "zbus",
