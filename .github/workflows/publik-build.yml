@@ -41,6 +41,33 @@ jobs:
         with:
           key: publik-build-macos-universal
           cache-on-failure: true
+      - name: Cargo.lock matches the manifests
+        run: cargo metadata --locked --format-version 1 > /dev/null
+      - name: Tests (the workspace, publik's tests included), before packaging
+        run: |
+          set -o pipefail
+          # The same publik build number as the release binary (package.sh sets it from this file).
+          ARTCRAFT_LAUNCHER_PUBLIK_BUILD="$(tr -d '[:space:]' < packaging/PUBLIK_BUILD)"
+          export ARTCRAFT_LAUNCHER_PUBLIK_BUILD
+          mkdir -p "$RUNNER_TEMP/publik-tests"
+          LOG="$RUNNER_TEMP/publik-tests/cargo-test.log"
+          cargo test --workspace --locked --color never -- --color never 2>&1 | tee "$LOG"
+          {
+            echo "## Test binaries and counts"
+            grep -E "^ +Running |^ +Doc-tests |^test result:" "$LOG" | sed -e 's/^ *//'
+            echo
+            echo "## publik's tests (names with publik or fork)"
+            grep -E "^test .*(publik|fork).* \.\.\. ok$" "$LOG" | sort
+            echo "publik tests passed: $(grep -cE "^test .*(publik|fork).* \.\.\. ok$" "$LOG")"
+            echo "all tests passed: $(grep -E '^test result:' "$LOG" | sed -E 's/.* ([0-9]+) passed.*/\1/' | paste -sd+ - | bc)"
+          } | tee "$RUNNER_TEMP/publik-tests/summary.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: craft-launcher-macos-tests
+          path: ${{ runner.temp }}/publik-tests/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build and package (ad-hoc signature, no notarization)
         run: |
           # The full commit, as publik's earlier launcher builds carry it (ArtCraftLauncherBuildCommit).
