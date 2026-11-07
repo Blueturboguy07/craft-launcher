@@ -197,6 +197,8 @@ mod tests {
                 installation: None,
             }),
             detected: true,
+            // The backend's answer: an install of the release would go ahead here.
+            installable: Some(true),
             ..AppEntry::new(app)
         }
     }
