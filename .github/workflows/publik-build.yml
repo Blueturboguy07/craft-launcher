@@ -22,6 +22,9 @@ concurrency:
 jobs:
   macos:
     name: macOS universal (unsigned)
+    # Never for a tag (v*-publik.* included) or a release event: publik signs and releases by hand.
+    # The trigger above can't produce either; this guard keeps it so if the trigger changes.
+    if: github.ref_type != 'tag' && github.event_name != 'release'
     runs-on: macos-15
     timeout-minutes: 150
     env:
