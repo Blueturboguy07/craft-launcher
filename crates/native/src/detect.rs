@@ -822,6 +822,39 @@ mod macos_tests {
         // ArtCraft's bundle never takes publik's number.
         assert_eq!(detected("ai.storyteller.gridcraft", "0.8.0+publik.2").as_deref(), Some("0.8.0"));
     }
+
+    /// ArtCraft Studio: publik's build is `ArtCraft.app` (`com.publik.artcraft`) and names its build
+    /// number in `ArtCraftVersion`; another app's bundle in the same place is not ArtCraft Studio.
+    #[test]
+    fn publiks_artcraft_studio_bundle_is_that_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let studio = CraftApp::by_id("artcraft").unwrap();
+        let make = |id: &str, name: &str, full: &str| {
+            let app = dir.path().join(format!("{id}/{name}.app"));
+            std::fs::create_dir_all(app.join("Contents")).unwrap();
+            std::fs::write(
+                app.join("Contents/Info.plist"),
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict>\
+                     <key>CFBundleIdentifier</key><string>{id}</string>\
+                     <key>CFBundleShortVersionString</key><string>0.42.0</string>\
+                     <key>ArtCraftVersion</key><string>{full}</string></dict></plist>"
+                ),
+            )
+            .unwrap();
+            app
+        };
+        let read = |path: &std::path::Path| macos::read_bundle(studio, path).map(|i| i.version.map(|v| v.to_string()));
+        assert_eq!(read(&make("com.publik.artcraft", "ArtCraft", "0.42.0+publik.5")), Some(Some("0.42.0+publik.5".to_string())));
+        // ArtCraft's own bundle id is this app too, without publik's mark.
+        assert_eq!(read(&make("ai.artcraft.app", "ArtCraft Studio", "0.42.0")), Some(Some("0.42.0".to_string())));
+        // The launcher's publik bundle, or anyone else's, is not ArtCraft Studio.
+        for other in ["com.publik.craftlauncher", "com.publik.artcraft.evil", "com.example.artcraft"] {
+            assert_eq!(read(&make(other, "ArtCraft", "0.42.0+publik.5")), None, "{other}");
+        }
+        // The Applications folders are searched for `ArtCraft.app` first.
+        assert!(macos::candidates(studio)[0].ends_with("ArtCraft.app"));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

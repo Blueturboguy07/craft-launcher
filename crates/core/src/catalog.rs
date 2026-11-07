@@ -502,4 +502,19 @@ mod tests {
         assert_eq!(photo.mac_bundle_names().collect::<Vec<_>>(), ["PhotoCraft"]);
         assert!(photo.runs_on(crate::Os::FreeBsd));
     }
+
+    /// publik's build of ArtCraft Studio: publik's fork (the feed's `artcraft` entry names the same),
+    /// publik's bundle id after ArtCraft's, and its listing on publik.
+    #[test]
+    fn artcraft_studio_is_read_from_publiks_fork() {
+        let studio = CraftApp::by_id("artcraft").unwrap();
+        assert_eq!(studio.kind, AppKind::Official);
+        assert_eq!(studio.repo, "Blueturboguy07/artcraft");
+        assert_eq!(studio.publik_repo(), "Blueturboguy07/artcraft");
+        assert_eq!(studio.publik_bundle_id(), "com.publik.artcraft");
+        assert_eq!(studio.bundle_ids().collect::<Vec<_>>(), ["ai.artcraft.app", "com.publik.artcraft"]);
+        assert_eq!(studio.stems().collect::<Vec<_>>(), ["artcraft"]);
+        assert_eq!(studio.website(), "https://publikhq.com/artcraft");
+        assert!(studio.installs(crate::PackageKind::Dmg));
+    }
 }

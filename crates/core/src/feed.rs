@@ -755,4 +755,40 @@ mod tests {
             assert_eq!(Feed::parse(&feed).unwrap().answer(app("photocraft"), NOW), FeedAnswer::AskGitHub, "{odd:?}");
         }
     }
+
+    /// ArtCraft Studio (`artcraft`) as publik's route serves it (trimmed from the answer of
+    /// Nov 7 2026): publik's fork and publik's build, and the launcher picks that build's dmg.
+    #[test]
+    fn artcraft_studio_gets_publiks_build_from_the_feed() {
+        let json = r#"{"success": true, "release_info": {"apps": {"artcraft": {"name": "ArtCraft", "repo": "Blueturboguy07/artcraft",
+            "latest_release": {"tag": "v0.42.0-publik.5", "version": "0.42.0", "name": "ArtCraft 0.42.0 (publik build 5)",
+              "published_at": "2026-11-07T09:03:14+00:00",
+              "html_url": "https://github.com/Blueturboguy07/artcraft/releases/tag/v0.42.0-publik.5",
+              "prerelease": false, "notes_markdown": "",
+              "assets": [
+                {"name": "artcraft-0.42.0-macos-universal.dmg", "size_bytes": 82845428, "sha256": null,
+                 "download_url": "https://github.com/Blueturboguy07/artcraft/releases/download/v0.42.0-publik.5/artcraft-0.42.0-macos-universal.dmg",
+                 "platform": {"os": "macos", "arch": "universal", "package_type": "dmg"}},
+                {"name": "SHA256SUMS.txt", "size_bytes": 102, "sha256": null, "platform": null,
+                 "download_url": "https://github.com/Blueturboguy07/artcraft/releases/download/v0.42.0-publik.5/SHA256SUMS.txt"}]},
+            "app_last_fetched": "2026-11-07T09:15:02.439Z"}},
+          "last_fetched": "2026-11-07T09:15:02.439Z"},
+          "app_renames": [], "repo_renames": [], "important_notices": {}}"#;
+        let feed = Feed::parse(json).unwrap();
+        let studio = app("artcraft");
+        let now = feed.last_fetched.unwrap();
+        let FeedAnswer::Fresh(Some(r)) = feed.answer(studio, now) else { panic!("ArtCraft Studio wasn't fresh") };
+        assert_eq!(r.tag, "v0.42.0-publik.5");
+        assert_eq!(r.version.as_ref().map(ToString::to_string).as_deref(), Some("0.42.0+publik.5"));
+        assert!(r.is_publik());
+        assert_eq!(r.assets.len(), 2);
+        let mac = crate::Platform { os: crate::Os::MacOs, arch: crate::Arch::Arm64 };
+        let stems: Vec<&str> = studio.stems().collect();
+        let (asset, kind) = crate::platform::pick_asset(&r, &stems, mac, &[crate::PackageKind::Dmg]).unwrap();
+        assert_eq!((asset.name.as_str(), kind), ("artcraft-0.42.0-macos-universal.dmg", crate::PackageKind::Dmg));
+        // The same entry naming ArtCraft's repo is not publik's fork: ask GitHub (publik's fork).
+        let theirs = json.replace(r#""repo": "Blueturboguy07/artcraft""#, r#""repo": "storytold/artcraft""#);
+        assert_ne!(theirs, json);
+        assert_eq!(Feed::parse(&theirs).unwrap().answer(studio, now), FeedAnswer::AskGitHub);
+    }
 }
