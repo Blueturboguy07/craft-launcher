@@ -272,12 +272,15 @@ pub fn install_at(
 pub(crate) fn bind_artifact_version(app: &CraftApp, release: &Release, asset: &Asset) -> Result<(), String> {
     let mismatch = || format!("{}'s download does not match the advertised version {}.", app.name, release.version_label());
     let release_version = release.version.as_ref();
+    // publik's builds carry publik's mark (`0.8.0+publik.2`, from the tag `v0.8.0-publik.2`); their
+    // file names carry the plain version (`gridcraft-0.8.0-macos-universal.dmg`).
+    let file_version = release_version.map(version::without_publik);
 
     // The version in the asset filename (`<stem>-<version>-<os>-<arch>.<ext>`), when it carries one.
     let stems: Vec<&str> = app.stems().collect();
-    if let Some(release_version) = release_version
+    if let Some(file_version) = file_version.as_ref()
         && let Some(parsed) = artcraft_launcher_core::platform::parse_asset_name(&asset.name, &stems)
-        && version::parse(&parsed.version).as_ref() != Some(release_version)
+        && version::parse(&parsed.version).as_ref() != Some(file_version)
     {
         return Err(mismatch());
     }
@@ -3606,6 +3609,24 @@ mod tests {
             ..Asset::default()
         };
         assert!(bind_artifact_version(app, &release, &bad_tag).is_err());
+    }
+
+    #[test]
+    fn a_publik_build_binds_to_its_plain_file_names() {
+        // publik's tag `v0.8.0-publik.2` reads as `0.8.0+publik.2`; its files are named `…-0.8.0-…`.
+        let app = CraftApp::by_id("photocraft").unwrap();
+        let tag = "v0.8.0-publik.2";
+        let release = Release { version: artcraft_launcher_core::release::publik_tag(tag), tag: tag.into(), ..Release::default() };
+        let asset = |name: &str, url_tag: &str| Asset {
+            name: name.into(),
+            url: format!("https://github.com/Blueturboguy07/photocraft/releases/download/{url_tag}/{name}"),
+            ..Asset::default()
+        };
+        assert!(bind_artifact_version(app, &release, &asset("photocraft-0.8.0-macos-universal.dmg", tag)).is_ok());
+        // Another version's file, or a download under another tag, is still refused.
+        assert!(bind_artifact_version(app, &release, &asset("photocraft-0.7.0-macos-universal.dmg", tag)).is_err());
+        assert!(bind_artifact_version(app, &release, &asset("photocraft-0.8.0-macos-universal.dmg", "v0.8.0-publik.1")).is_err());
+        assert!(bind_artifact_version(app, &release, &asset("photocraft-0.8.0-macos-universal.dmg", "v0.8.0")).is_err());
     }
 
     #[cfg(target_os = "linux")]

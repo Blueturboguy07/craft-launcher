@@ -123,14 +123,19 @@ pub fn publik_number(v: &Version) -> Option<u64> {
     v.build.as_str().strip_prefix(PUBLIK)?.strip_prefix('.')?.parse().ok()
 }
 
+/// `v` without publik's mark: the plain version that publik's file names carry
+/// (`gridcraft-0.8.0-macos-universal.dmg` in release `v0.8.0-publik.2`). Any other `v` as it is.
+pub fn without_publik(v: &Version) -> Version {
+    let mut plain = v.clone();
+    if is_publik(v) {
+        plain.build = BuildMetadata::EMPTY;
+    }
+    plain
+}
+
 /// `v` as the UI shows it: without publik's mark, which the UI shows as words instead.
 pub fn label(v: &Version) -> String {
-    if !is_publik(v) {
-        return v.to_string();
-    }
-    let mut plain = v.clone();
-    plain.build = BuildMetadata::EMPTY;
-    plain.to_string()
+    without_publik(v).to_string()
 }
 
 /// A version that's a plain `X.Y.Z` with no pre-release suffix.
@@ -244,6 +249,10 @@ mod tests {
         assert_eq!(label(&release), "0.8.0");
         assert_eq!(label(&publik(v("0.3.0-rc.1"), Some(1))), "0.3.0-rc.1");
         assert_eq!(label(&v("0.2.0+abc")), "0.2.0+abc");
+        // File names carry the plain version: only publik's mark goes.
+        assert_eq!(without_publik(&release), v("0.8.0"));
+        assert_eq!(without_publik(&publik(v("0.3.0-rc.1"), None)), v("0.3.0-rc.1"));
+        assert_eq!(without_publik(&v("0.2.0+abc")), v("0.2.0+abc"));
     }
 
     #[test]
