@@ -960,7 +960,7 @@ impl LauncherUi {
         }
         // Once the pinned version is the installed one, the normal statuses (Open) take over again.
         if let Some(artcraft_launcher_core::protocol::VersionTrack::Pinned(tag)) = self.settings.versions.get(entry.app.id)
-            && entry.installed.as_ref().and_then(|i| i.version.as_ref()) != artcraft_launcher_core::version::parse(tag).as_ref()
+            && entry.installed.as_ref().and_then(|i| i.version.as_ref()) != artcraft_launcher_core::release::tag_version(tag).as_ref()
         {
             // Checked by the backend, and an install of it would go ahead here.
             let checked = self.version_installs(entry, tag) == Some(true)

@@ -241,6 +241,12 @@ pub fn publik_tag(tag: &str) -> Option<Version> {
     Some(version::publik(base, Some(n.parse().ok()?)))
 }
 
+/// The version a release tag names: publik's `v0.8.0-publik.2` reads as `0.8.0+publik.2` (the
+/// version publik's installed copies report), any other tag as [`version::parse`] reads it.
+pub fn tag_version(tag: &str) -> Option<Version> {
+    publik_tag(tag).or_else(|| version::parse(tag))
+}
+
 /// Reads `GET /repos/<fork>/releases` of publik's fork and returns publik's newest build: of the
 /// releases tagged `…-publik.<n>`, the highest version, and of those the highest `n`. Drafts
 /// never count; pre-releases (GitHub's flag or a pre-release version) only with
@@ -481,7 +487,7 @@ mod tests {
 
     #[test]
     fn selected_release_cannot_download_an_asset_from_a_different_tag() {
-        let wrong_tag = "https://github.com/storytold/photocraft/releases/download/v9.0.0/photocraft-0.5.0-macos-universal.dmg";
+        let wrong_tag = "https://github.com/Blueturboguy07/photocraft/releases/download/v9.0.0/photocraft-0.5.0-macos-universal.dmg";
         let r = parse_github_release(&api_json(wrong_tag), REPO).unwrap();
         assert!(r.assets.is_empty());
     }
@@ -490,12 +496,12 @@ mod tests {
     fn traversal_cannot_escape_the_repository() {
         // Raw-prefix matches but the interpreted path climbs into another repository (CWE-180).
         for url in [
-            "https://github.com/storytold/photocraft/releases/download/../../../../attacker/repo/releases/download/v99/photocraft-99.0.0-linux-x86_64.AppImage",
-            "https://github.com/storytold/photocraft/releases/download/v1/../../../attacker/repo/x.dmg",
-            "https://github.com/storytold/photocraft/releases/download/./v1/x.dmg",
-            "https://github.com/storytold/photocraft/releases/download/v1/sub/x.dmg",
-            "https://github.com/storytold/photocraft/releases/download/v1%2f..%2f..%2fx.dmg",
-            "https://github.com/storytold/photocraft/releases/download/v1/x%2fy.dmg",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/../../../../attacker/repo/releases/download/v99/photocraft-99.0.0-linux-x86_64.AppImage",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/v1/../../../attacker/repo/x.dmg",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/./v1/x.dmg",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/v1/sub/x.dmg",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/v1%2f..%2f..%2fx.dmg",
+            "https://github.com/Blueturboguy07/photocraft/releases/download/v1/x%2fy.dmg",
         ] {
             let prefix = download_prefix(REPO);
             assert!(!download_url_under(url, &prefix), "{url}");
@@ -504,7 +510,10 @@ mod tests {
         }
         // A plain, confined download still passes.
         let prefix = download_prefix(REPO);
-        assert!(download_url_under("https://github.com/storytold/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg", &prefix));
+        assert!(download_url_under(
+            "https://github.com/Blueturboguy07/photocraft/releases/download/v0.5.0/photocraft-0.5.0-macos-universal.dmg",
+            &prefix
+        ));
     }
 
     #[test]
@@ -608,6 +617,10 @@ mod tests {
         ] {
             assert_eq!(publik_tag(other), None, "{other}");
         }
+        // A pinned tag reads as the version an installed copy reports.
+        assert_eq!(tag_version("v0.8.0-publik.2").map(|v| v.to_string()).as_deref(), Some("0.8.0+publik.2"));
+        assert_eq!(tag_version("v0.8.0").map(|v| v.to_string()).as_deref(), Some("0.8.0"));
+        assert_eq!(tag_version("v0.9.0-nightly.1").map(|v| v.to_string()).as_deref(), Some("0.9.0-nightly.1"));
     }
 
     #[test]

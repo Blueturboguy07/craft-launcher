@@ -85,7 +85,7 @@ impl LauncherUi {
             VersionTrack::Stable => release.filter(|r| !r.prerelease)?.tag.clone(),
         };
         let installed = entry.installed.as_ref().and_then(|i| i.version.as_ref());
-        if installed.is_some() && installed == version::parse(&tag).as_ref() {
+        if installed.is_some() && installed == artcraft_launcher_core::release::tag_version(&tag).as_ref() {
             return Some((tl!("Installed").to_string(), false, None));
         }
         let ready = self.version_installs(entry, &tag) == Some(true);
