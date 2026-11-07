@@ -189,14 +189,19 @@ pub mod macos {
 
     /// Where a `.app` might be: the system and the user's Applications folders.
     pub fn candidates(app: &CraftApp) -> Vec<PathBuf> {
-        let bundle = format!("{}.app", app.name);
-        let mut out = vec![Path::new("/Applications").join(&bundle)];
-        if let Some(home) = dirs::home_dir() {
-            out.push(home.join("Applications").join(&bundle));
+        let home = dirs::home_dir();
+        let mut out = Vec::new();
+        for name in app.mac_bundle_names() {
+            let bundle = format!("{name}.app");
+            out.push(Path::new("/Applications").join(&bundle));
+            if let Some(home) = &home {
+                out.push(home.join("Applications").join(&bundle));
+            }
         }
         out
     }
 
+    /// Finds an installed `.app` bundle for `app` in the standard Applications folders.
     pub fn detect(app: &CraftApp) -> Option<Installed> {
         candidates(app).iter().find_map(|p| read_bundle(app, p))
     }
@@ -216,9 +221,21 @@ pub mod macos {
         }
         // `<App>Version` carries the full version: a pre-release suffix, and in publik's bundles
         // the build number (`0.9.0+publik.3`); CFBundleShortVersionString only has the numbers.
-        let full_key = format!("{}Version", app.name.replace(' ', ""));
-        let text =
-            [full_key.as_str(), "CFBundleShortVersionString", "CFBundleVersion"].iter().find_map(|k| dict.get(k).and_then(plist::Value::as_string));
+        // One key per bundle name (`ArtCraftVersion` for ArtCraft Studio); publik's packaging
+        // writes it without spaces (`CraftAnythingVersion`), so that spelling comes first.
+        let mut full_keys: Vec<String> = Vec::new();
+        for name in app.mac_bundle_names() {
+            for key in [format!("{}Version", name.replace(' ', "")), format!("{name}Version")] {
+                if !full_keys.contains(&key) {
+                    full_keys.push(key);
+                }
+            }
+        }
+        let text = full_keys
+            .iter()
+            .map(String::as_str)
+            .chain(["CFBundleShortVersionString", "CFBundleVersion"])
+            .find_map(|k| dict.get(k).and_then(plist::Value::as_string));
         // publik's bundle is publik's build even when it doesn't say which (build 1 and 2 didn't).
         let version =
             text.and_then(version::parse).map(|v| if publik && version::publik_number(&v).is_none() { version::publik(v, None) } else { v });

@@ -247,7 +247,7 @@ impl NativeBackend {
         let pre = options.prereleases;
         let feed = if pre { None } else { load_feed(&self.paths) };
         let now = crate::now();
-        for app in &SUITE {
+        for app in SUITE.iter().filter(|a| self.platform.is_none_or(|p| a.runs_on(p.os))) {
             let answer = match feed.as_ref().map(|f| f.answer(app, now)) {
                 Some(FeedAnswer::Fresh(build)) => {
                     Some((for_platform(app, build.map_or(LatestRelease::None, LatestRelease::Found), self.platform), Origin::Publik))
@@ -274,7 +274,7 @@ impl NativeBackend {
         let paths = self.paths.clone();
         let platform = self.platform;
         std::thread::spawn(move || {
-            for app in &SUITE {
+            for app in SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))) {
                 report_partial(app, &shared, &paths, platform);
             }
         });
@@ -284,6 +284,7 @@ impl NativeBackend {
         self.shared.options.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
+    /// Scans for installed Craft Apps and paused downloads on a background thread.
     fn detect_all(&self) {
         if self.shared.detecting.swap(true, Ordering::SeqCst) {
             return;
@@ -299,12 +300,12 @@ impl NativeBackend {
             http::clean_downloads(&paths.downloads(), Duration::from_secs(30 * 86_400), Duration::from_secs(7 * 86_400));
             let snapshot = crate::detect::Snapshot::take();
             let manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner).clone();
-            for app in &SUITE {
+            for app in SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))) {
                 let found = crate::detect::detect(app, &manifest, &snapshot);
                 publish_detected(app, found, &shared, platform);
             }
             // Downloads paused (or cut off by quitting) in an earlier run.
-            for app in &SUITE {
+            for app in SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))) {
                 report_partial(app, &shared, &paths, platform);
             }
             drop(busy);
@@ -317,7 +318,7 @@ impl NativeBackend {
     /// hour per app unless `force`. Nothing else is ever asked: no ArtCraft API, no ArtCraft repo.
     fn check(&self, force: bool) {
         let (Some(source), Some(http)) = (self.source.clone(), self.http.clone()) else {
-            for app in &SUITE {
+            for app in SUITE.iter().filter(|a| self.platform.is_none_or(|p| a.runs_on(p.os))) {
                 self.shared.emit(Event::Latest {
                     app: app.id.to_string(),
                     latest: LatestRelease::Failed("secure connections aren't available".into()),
@@ -346,17 +347,19 @@ impl NativeBackend {
                 shared.emit(Event::Notices { announcements: f.announcements.clone(), alerts: f.alerts.clone() });
             }
             let now = crate::now();
-            let queue = Mutex::new(SUITE.iter().chain(std::iter::once(&LAUNCHER)).collect::<Vec<&CraftApp>>());
+            let queue = Mutex::new(
+                SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))).chain(std::iter::once(&LAUNCHER)).collect::<Vec<&CraftApp>>(),
+            );
             let sources = sweep(&queue, &mirror, feed.as_ref(), fallback, &source, &shared, &paths, (platform, &options), force, now);
             source.save();
             {
                 let answered = shared.answered.lock().unwrap_or_else(PoisonError::into_inner);
-                if SUITE.iter().all(|a| answered.contains(a.id)) {
+                if SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))).all(|a| answered.contains(a.id)) {
                     shared.loaded.store(true, Ordering::SeqCst);
                 }
             }
             // A newer release changes which file an install would use.
-            for app in &SUITE {
+            for app in SUITE.iter().filter(|a| platform.is_none_or(|p| a.runs_on(p.os))) {
                 report_partial(app, &shared, &paths, platform);
             }
             let source_used = source_used_of(&sources);
@@ -368,9 +371,13 @@ impl NativeBackend {
         });
     }
 
+    /// Starts an install, update, or uninstall job for `app_id` on a background thread.
     fn start_job(&self, app_id: &str, work: Work) {
         let uninstall = matches!(work, Work::Uninstall);
         let Some(app) = CraftApp::by_id(app_id) else { return };
+        if self.platform.is_some_and(|p| !app.runs_on(p.os)) {
+            return;
+        }
         log::info!("{}: starting {} job", app.name, if uninstall { "uninstall" } else { "install/update" });
         let stop = Arc::new(Stop::default());
         let restarting = {
@@ -722,6 +729,7 @@ fn run_install(
             return Err(format!("{} already exists", path.display()));
         }
     };
+    let approved_path = occupied.as_deref().filter(|_| replace);
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut phase = |p: JobPhase| {
         // Downloads report thousands of times; the UI needs ~20 a second.
@@ -731,7 +739,7 @@ fn run_install(
         last_emit = Instant::now();
         shared.emit(Event::Progress { app: app.id.to_string(), phase: p });
     };
-    let mut job = Job { http, paths, stop, phase: &mut phase, install_locations: &options.install_locations, replace, downgrade };
+    let mut job = Job { http, paths, stop, phase: &mut phase, install_locations: &options.install_locations, replace, approved_path, downgrade };
     let mut commit_record = |record: &crate::manifest::Record| {
         let mut manifest = shared.manifest.lock().unwrap_or_else(PoisonError::into_inner);
         let mut updated = manifest.clone();

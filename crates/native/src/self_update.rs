@@ -197,7 +197,7 @@ fn update_publik_app(
     let (asset, _) = pick_asset(release, &[LAUNCHER.id], platform, &[PackageKind::Dmg])
         .ok_or_else(|| format!("ArtCraft Launcher {} has no disk image for {}", release.version_label(), platform.label()))?;
     let asset = asset.clone();
-    let mut job = Job { http, paths, stop, phase, install_locations: &Default::default(), replace: false, downgrade: None };
+    let mut job = Job { http, paths, stop, phase, install_locations: &Default::default(), replace: false, approved_path: None, downgrade: None };
     let (file, _) = install::download(release, &asset, &mut job)?;
     // The restart ends this process: nothing else may be under way.
     last()?;
@@ -217,7 +217,7 @@ fn update_publik_app(
         installation: None,
     };
     let placed =
-        install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), None, false, paths, &install::macos::Expect::release(&LAUNCHER, release));
+        install::macos::install_dmg(&LAUNCHER, &file, Some(&existing), None, None, paths, &install::macos::Expect::release(&LAUNCHER, release));
     let _ = std::fs::remove_file(&file);
     let scheduled = placed.and_then(|placed| {
         crate::process::spawn_detached(relaunch_command(std::process::id(), &placed)).map_err(|e| format!("couldn't schedule the restart ({e})"))

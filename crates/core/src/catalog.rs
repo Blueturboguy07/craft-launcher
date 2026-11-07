@@ -36,6 +36,8 @@ pub struct CraftApp {
     pub former_ids: &'static [&'static str],
     /// Older display names its installers registered (PdfCraft's MSI said PrintCraft until 0.2.1).
     pub former_names: &'static [&'static str],
+    /// The `.app` bundle stem on macOS when it differs from `name` (`ArtCraft` for `ArtCraft Studio`).
+    pub mac_bundle_name: Option<&'static str>,
     pub kind: AppKind,
     /// Who publishes it, as the card's byline shows it (`ArtCraft`, `Tangency Labs`).
     pub publisher: &'static str,
@@ -78,6 +80,14 @@ impl CraftApp {
         kind != crate::PackageKind::Dmg || self.mac_team.is_some()
     }
 
+    /// Whether this app runs on the given operating system.
+    pub fn runs_on(&self, os: crate::Os) -> bool {
+        match os {
+            crate::Os::FreeBsd => self.id != "artcraft",
+            _ => true,
+        }
+    }
+
     /// Bundle ids this app may be installed under, current first, then publik's build
     /// ([`CraftApp::publik_bundle_id`]): the only one publik's releases carry.
     pub fn bundle_ids(&self) -> impl Iterator<Item = String> + '_ {
@@ -92,6 +102,19 @@ impl CraftApp {
     /// Display names this app's installers may have registered, current first.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         std::iter::once(self.name).chain(self.former_names.iter().copied())
+    }
+
+    /// The primary `.app` bundle stem on macOS (`ArtCraft` or `PhotoCraft`).
+    pub fn mac_bundle_name(&self) -> &'static str {
+        self.mac_bundle_name.unwrap_or(self.name)
+    }
+
+    /// Bundle stems a macOS `.app` may carry (`ArtCraft` and `ArtCraft Studio`), release name first.
+    pub fn mac_bundle_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        let primary = self.mac_bundle_name();
+        std::iter::once(primary)
+            .chain(std::iter::once(self.name).filter(move |&n| n != primary))
+            .chain(self.former_names.iter().copied().filter(move |&n| n != primary && n != self.name))
     }
 
     pub fn by_id(id: &str) -> Option<&'static CraftApp> {
@@ -133,6 +156,7 @@ const fn app(
         repo,
         former_ids: &[],
         former_names: &[],
+        mac_bundle_name: None,
         kind: AppKind::Official,
         publisher: "ArtCraft",
         msi_publisher: None,
@@ -144,7 +168,19 @@ const fn app(
 }
 
 /// The Craft App Suite, in display order matching getartcraft.com, then the community apps:
-pub const SUITE: [CraftApp; 17] = [
+pub const SUITE: [CraftApp; 18] = [
+    CraftApp {
+        former_names: &["ArtCraft"],
+        mac_bundle_name: Some("ArtCraft"),
+        bundle: Some("ai.artcraft.app"),
+        ..app(
+            "artcraft",
+            "ArtCraft Studio",
+            "AI image and video creation",
+            [[47, 123, 245], [26, 91, 196], [127, 176, 255]],
+            "Blueturboguy07/artcraft",
+        )
+    },
     app("photocraft", "PhotoCraft", "Image editing", [[0x2f, 0x7b, 0xf5], [0x1a, 0x5b, 0xc4], [0x7f, 0xb0, 0xff]], "Blueturboguy07/photocraft"),
     app(
         "vectorcraft",
@@ -324,6 +360,7 @@ pub const LAUNCHER_ID: &str = "artcraft-launcher";
 /// draws it, and the Linux install puts it in the desktop menu.
 pub fn app_icon_png(id: &str) -> Option<&'static [u8]> {
     Some(match id {
+        "artcraft" => include_bytes!("../../../assets/app-icons/artcraft.png"),
         "photocraft" => include_bytes!("../../../assets/app-icons/photocraft.png"),
         "vectorcraft" => include_bytes!("../../../assets/app-icons/vectorcraft.png"),
         "filmcraft" => include_bytes!("../../../assets/app-icons/filmcraft.png"),
@@ -360,15 +397,17 @@ mod tests {
 
     /// Every catalog entry must have a distinct lookup key.
     #[test]
-    fn suite_has_seventeen_apps_with_unique_ids() {
-        assert_eq!(SUITE.len(), 17);
+    fn suite_has_eighteen_apps_with_unique_ids() {
+        assert_eq!(SUITE.len(), 18);
         let mut ids: Vec<_> = SUITE.iter().map(|a| a.id).collect();
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), SUITE.len());
         for a in &SUITE {
             // `Craft Anything` is `craft-anything`.
-            assert_eq!(a.name.to_lowercase().replace(' ', "-"), a.id);
+            if a.id != "artcraft" {
+                assert_eq!(a.name.to_lowercase().replace(' ', "-"), a.id);
+            }
             // Official or community: publik's fork.
             assert_eq!(a.repo, format!("Blueturboguy07/{}", a.id));
         }
@@ -444,5 +483,23 @@ mod tests {
         assert_eq!(pdf.website(), "https://publikhq.com/pdfcraft");
         assert_eq!(CraftApp::by_id("wordcraft").unwrap().website(), "https://publikhq.com/wordcraft");
         assert_eq!(WEBSITE_URL, "https://publikhq.com/adobe");
+    }
+
+    /// ArtCraft Studio is first in the suite, uses `ArtCraft` as its release macOS bundle stem, and skips FreeBSD.
+    #[test]
+    fn artcraft_studio_does_not_run_on_freebsd() {
+        assert_eq!(SUITE[0].id, "artcraft");
+        let studio = CraftApp::by_id("artcraft").unwrap();
+        assert_eq!(studio.mac_bundle_name(), "ArtCraft");
+        assert_eq!(studio.mac_bundle_names().collect::<Vec<_>>(), ["ArtCraft", "ArtCraft Studio"]);
+        assert!(!studio.runs_on(crate::Os::FreeBsd));
+        assert!(studio.runs_on(crate::Os::Linux));
+        assert!(studio.runs_on(crate::Os::MacOs));
+        assert!(studio.runs_on(crate::Os::Windows));
+
+        let photo = CraftApp::by_id("photocraft").unwrap();
+        assert_eq!(photo.mac_bundle_name(), "PhotoCraft");
+        assert_eq!(photo.mac_bundle_names().collect::<Vec<_>>(), ["PhotoCraft"]);
+        assert!(photo.runs_on(crate::Os::FreeBsd));
     }
 }
