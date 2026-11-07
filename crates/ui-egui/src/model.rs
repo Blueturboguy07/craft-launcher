@@ -22,11 +22,16 @@ pub struct AppEntry {
     pub paused: Option<PausedDownload>,
     /// A finished download waiting for another try at installing it.
     pub ready: bool,
+    /// The backend's word on whether an install of the latest release over the installed copy
+    /// would go ahead ([`Event::Installable`](artcraft_launcher_core::protocol::Event::Installable));
+    /// `None` where it gives none (the web build), and then [`Self::has_download`] decides. Only
+    /// read while a copy is installed.
+    pub installable: Option<bool>,
 }
 
 impl AppEntry {
     pub fn new(app: &'static CraftApp) -> Self {
-        Self { app, latest: None, installed: None, detected: false, job: None, origin: None, paused: None, ready: false }
+        Self { app, latest: None, installed: None, detected: false, job: None, origin: None, paused: None, ready: false, installable: None }
     }
 
     pub fn release(&self) -> Option<&Release> {
@@ -40,7 +45,29 @@ impl AppEntry {
     pub fn has_download(&self, platform: Option<Platform>) -> bool {
         let (Some(r), Some(p)) = (self.release(), platform) else { return false };
         let stems: Vec<&str> = self.app.stems().collect();
-        pick_asset(r, &stems, p, p.download_kinds()).is_some()
+        let kinds: Vec<_> = p.download_kinds().iter().copied().filter(|k| self.app.installs(*k)).collect();
+        pick_asset(r, &stems, p, &kinds).is_some()
+    }
+
+    /// Whether an install of the latest release would go ahead here. Only the backend knows which
+    /// package can replace an installed copy (an AppImage with an AppImage) and which copies are
+    /// left to whatever installed them, so for an installed copy its answer decides
+    /// ([`Self::installable`]); otherwise, whether the release has a download `platform` takes.
+    pub fn installs_here(&self, platform: Option<Platform>) -> bool {
+        match (&self.installed, self.installable) {
+            (Some(_), Some(installable)) => installable,
+            _ => self.has_download(platform),
+        }
+    }
+
+    /// The newer release an installed copy can't be updated to from here, so it isn't offered as
+    /// an update. `None` unless a newer release is out, an install wouldn't go ahead, and the copy
+    /// isn't one its repository updates (whose own latest the release feed doesn't know).
+    pub fn newer_out_of_reach(&self, platform: Option<Platform>) -> Option<String> {
+        let installed = self.installed.as_ref().filter(|i| !i.externally_managed)?;
+        let newer =
+            self.release()?.version.as_ref().zip(installed.version.as_ref()).is_some_and(|(l, i)| artcraft_launcher_core::version::is_update(l, i));
+        (newer && !self.installs_here(platform)).then(|| self.latest_label()).flatten()
     }
 
     pub fn status(&self, platform: Option<Platform>, manage_apps: bool) -> AppStatus {
@@ -51,7 +78,7 @@ impl AppEntry {
             None => Latest::Pending,
             Some(LatestRelease::Failed(_)) => Latest::Failed,
             Some(LatestRelease::None) => Latest::NoRelease,
-            Some(LatestRelease::Found(r)) => Latest::Found { version: r.version.as_ref(), has_asset: self.has_download(platform) },
+            Some(LatestRelease::Found(r)) => Latest::Found { version: r.version.as_ref(), has_asset: self.installs_here(platform) },
         };
         status::status(self.installed.as_ref(), latest)
     }
@@ -160,7 +187,15 @@ mod tests {
         let release = Release { tag: tag.into(), version: artcraft_launcher_core::release::publik_tag(tag), ..Release::default() };
         AppEntry {
             latest: Some(LatestRelease::Found(release)),
-            installed: Some(Installed { version: version::parse(installed), source: InstallSource::MacApp, location: String::new(), package: None }),
+            installed: Some(Installed {
+                version: version::parse(installed),
+                source: InstallSource::MacApp,
+                location: String::new(),
+                package: None,
+                externally_managed: false,
+                origin: None,
+                installation: None,
+            }),
             detected: true,
             ..AppEntry::new(app)
         }
@@ -172,7 +207,8 @@ mod tests {
         assert_eq!(e.status(None, true), AppStatus::UpdateAvailable);
         let installed = e.installed_label();
         assert_eq!(e.latest_label_beside(installed.as_deref()).as_deref(), Some("0.8.0-publik.2"));
-        assert_eq!(crate::card_parts::strip_version(&e, &AppStatus::UpdateAvailable), "0.8.0 → 0.8.0-publik.2 · publik build");
+        let parts: Vec<String> = crate::card_parts::strip_version(&e, &AppStatus::UpdateAvailable, None).into_iter().map(|(text, _)| text).collect();
+        assert_eq!(parts.concat(), "0.8.0 → 0.8.0-publik.2 · publik build");
         // A new version reads as before.
         let e = entry("0.7.0+publik.3", "v0.8.0-publik.2");
         assert_eq!(e.latest_label_beside(Some("0.7.0")).as_deref(), Some("0.8.0"));
