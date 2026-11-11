@@ -329,13 +329,21 @@ lot from them. Thank you to their authors:
 | [ArtCraft Hub Launcher](https://github.com/tinyplayerss/artcraft-hub-launcher) | [@tinyplayerss](https://github.com/tinyplayerss) | A friendly, one-window hub for the whole suite |
 | [CraftHub](https://github.com/MegaTheLEGEND/CraftHub) | [@MegaTheLEGEND](https://github.com/MegaTheLEGEND) | Serving the apps' web builds from a self-hosted launcher |
 
+## Sign in with publik
+
+publik's build of ArtCraft Launcher opens with "Sign in with publik". The button opens publik in your
+browser; the launcher's window continues once you signed in there. The sign-in happens once per
+computer: publik gives this computer a key for the launcher (`POST /api/v1/installs`), kept in
+publik's own folder of your user account. The launcher calls no AI model, so it never asks how to pay
+for AI. Settings in the launcher are not affected. Details: https://publikhq.com/sdk/publik.rs.md
+
 ## Usage counts
 
 publik's build of ArtCraft Launcher sends two anonymous usage events to publik: `app_opened` (one for
-each start of the launcher) and `active_session` (every 30 minutes while it runs, also in the tray).
-An event holds the app name, the launcher version, the operating system, the CPU type and a random
-install ID. It holds no file, no file name and no list of your apps. When this computer has a publik
-API key for the launcher, the event carries that key, so publik counts the account one time. To turn
+each start of the launcher, once you signed in) and `active_session` (every 30 minutes while it runs,
+also in the tray). An event holds the app name, the launcher version, the operating system, the CPU
+type and a random install ID. It holds no file, no file name and no list of your apps. The event
+carries this computer's publik key for the launcher, so publik counts the account one time. To turn
 it off, set `DO_NOT_TRACK=1` in the environment. Details: https://publikhq.com/skills/telemetry.md
 
 ## License and credits
