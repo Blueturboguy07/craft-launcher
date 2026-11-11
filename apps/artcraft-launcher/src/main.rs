@@ -15,11 +15,9 @@ mod spaces;
 #[cfg(target_os = "linux")]
 mod system_theme;
 mod tray;
-// publik's usage counts (README: Usage counts). The file is publik's reference client; only its HTTP
-// function is written for the launcher's own HTTP crate.
-#[rustfmt::skip]
-#[allow(clippy::all)]
-mod publik_telemetry;
+// Sign in with publik and usage counting: this build's publik facts and the gate every publik app
+// opens with.
+mod publik;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -39,12 +37,6 @@ const APP_ID: &str = "ai.storyteller.artcraft-launcher";
 const SETTINGS_KEY: &str = "settings";
 
 type Wake = Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>;
-
-/// The version in publik's usage counts: the release tag without its `v`, for example `0.5.1-publik.4`.
-/// The build number comes from `packaging/PUBLIK_BUILD`, the file the bundle version comes from.
-fn publik_version() -> String {
-    format!("{}-publik.{}", env!("CARGO_PKG_VERSION"), include_str!("../../../packaging/PUBLIK_BUILD").trim())
-}
 
 fn main() -> ExitCode {
     // First, so the panic report and every start-up warning are recorded (`logging`).
@@ -79,6 +71,12 @@ fn main() -> ExitCode {
         println!("artcraft-launcher {v}");
         return ExitCode::SUCCESS;
     }
+    // Builder check (publikhq.com/skills/setup.md): the built launcher provisions publik API for
+    // real and prints one line. The builder who runs it is the consent.
+    if std::env::var_os("PUBLIK_SELF_TEST").is_some() {
+        println!("{}", craft_publik::self_test(&publik::app_info()));
+        return ExitCode::SUCCESS;
+    }
     let mut hidden = args.iter().any(|a| a == login::HIDDEN_FLAG);
 
     let wake: Wake = Arc::new(OnceLock::new());
@@ -86,10 +84,10 @@ fn main() -> ExitCode {
         Instance::Secondary => return ExitCode::SUCCESS,
         Instance::Primary(rx) => rx,
     };
-    // publik's usage counts: `app_opened` now, `active_session` every 30 minutes, on a background
-    // thread. After the early exits above, so `--version` and a second start (it only asks the
-    // running launcher to show its window) send nothing.
-    publik_telemetry::start("craft-launcher", &publik_version(), None);
+    // publik's usage counts (`app_opened` now, `active_session` every 30 minutes) start once the
+    // gate passed (`publik::app_info`, `craft_publik::ui::Gate` in `Launcher::new`): after the early
+    // exits above, so `--version`, the self-test and a second start (it only asks the running
+    // launcher to show its window) send nothing.
     // The log file lives in the launcher's data folder (beside the executable in portable mode);
     // opened after the arguments (so `--version` leaves no file behind) and once this is the only
     // launcher running, so a second start doesn't rotate away the running one's log. Records
@@ -127,7 +125,9 @@ fn main() -> ExitCode {
 
     let backend_waker = waker.clone();
     let settings_path = settings_file::path(APP_ID);
-    let mut launcher = Launcher::new(Box::new(NativeBackend::new(move || backend_waker.wake())), starts, settings_path.clone());
+    // Sign in with publik: provisioning starts now, on a worker thread; `Shell::ui` draws the gate.
+    let gate = craft_publik::ui::Gate::new(publik::app_info());
+    let mut launcher = Launcher::new(Box::new(NativeBackend::new(move || backend_waker.wake())), starts, settings_path.clone(), gate);
     #[cfg(target_os = "linux")]
     {
         let theme_waker = waker.clone();
@@ -588,6 +588,8 @@ impl Host for DesktopHost {
 struct Launcher {
     #[cfg(target_os = "linux")]
     system_theme: system_theme::Monitor,
+    /// Sign in with publik: drawn by every window before the launcher's own UI until it passed.
+    gate: craft_publik::ui::Gate,
     ui: LauncherUi,
     tray: Option<tray::Tray>,
     host: DesktopHost,
@@ -608,7 +610,12 @@ struct Launcher {
 }
 
 impl Launcher {
-    fn new(backend: Box<dyn Backend>, starts: Receiver<single_instance::Request>, settings_path: Option<PathBuf>) -> Self {
+    fn new(
+        backend: Box<dyn Backend>,
+        starts: Receiver<single_instance::Request>,
+        settings_path: Option<PathBuf>,
+        gate: craft_publik::ui::Gate,
+    ) -> Self {
         let windowless = egui::Context::default();
         let (asked, run_again) = channel();
         windowless.set_request_repaint_callback(move |info| {
@@ -617,6 +624,7 @@ impl Launcher {
         Self {
             #[cfg(target_os = "linux")]
             system_theme: system_theme::Monitor::default(),
+            gate,
             ui: LauncherUi::new(&windowless, backend, Settings::default()),
             tray: None,
             host: DesktopHost { tray: false, quit: false, default_folders: Vec::new() },
@@ -874,6 +882,11 @@ impl eframe::App for Shell<'_> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Sign in with publik first: the launcher's own UI waits until the gate passed. The work
+        // in `logic` (update checks, the tray) goes on meanwhile.
+        if !self.launcher.gate.ui(ui) {
+            return;
+        }
         self.launcher.ui.ui(ui, &mut self.launcher.host);
         ui.ctx().output_mut(|o| {
             o.commands.retain(|cmd| {
@@ -966,7 +979,12 @@ mod tests {
     fn launcher() -> (Launcher, Sender<single_instance::Request>, Arc<Seen>) {
         let seen = Arc::new(Seen { clock: AtomicI64::new(NOW), ..Seen::default() });
         let (show, show_requests) = channel();
-        (Launcher::new(Box::new(Quiet(seen.clone())), show_requests, None), show, seen)
+        (Launcher::new(Box::new(Quiet(seen.clone())), show_requests, None, gate()), show, seen)
+    }
+
+    /// A gate that has passed: these tests look at the launcher behind it.
+    fn gate() -> craft_publik::ui::Gate {
+        craft_publik::ui::Gate::for_test(publik::app_info())
     }
 
     #[test]
@@ -1127,7 +1145,7 @@ mod tests {
         let path = dir.join("app.ron");
         let seen = Arc::new(Seen { clock: AtomicI64::new(NOW), ..Seen::default() });
         let (_show, show_requests) = channel();
-        let mut launcher = Launcher::new(Box::new(Quiet(seen.clone())), show_requests, Some(path.clone()));
+        let mut launcher = Launcher::new(Box::new(Quiet(seen.clone())), show_requests, Some(path.clone()), gate());
         let (_wake, woken) = sync_channel(1);
         // A check finishes in the same tick as the user quits from the tray.
         seen.news.lock().unwrap_or_else(PoisonError::into_inner).push(Event::CheckFinished {
@@ -1147,7 +1165,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("artcraft-launcher-tray-nosave-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let (_, show_requests) = channel();
-        let mut launcher = Launcher::new(Box::new(Quiet(Arc::new(Seen::default()))), show_requests, Some(dir.join("app.ron")));
+        let mut launcher = Launcher::new(Box::new(Quiet(Arc::new(Seen::default()))), show_requests, Some(dir.join("app.ron")), gate());
         let (_wake, woken) = sync_channel(1);
         launcher.host.quit();
         assert!(!launcher.wait_in_tray(&woken));

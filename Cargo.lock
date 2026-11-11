@@ -272,11 +272,12 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
 name = "artcraft-launcher"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "artcraft-launcher-core",
  "artcraft-launcher-native",
  "artcraft-launcher-ui-egui",
+ "craft-publik",
  "craft-quit",
  "eframe",
  "egui",
@@ -291,7 +292,6 @@ dependencies = [
  "ron",
  "serde",
  "tray-icon",
- "ureq",
  "winreg",
  "winresource",
  "zbus",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "artcraft-launcher-core"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "jiff",
  "semver",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "artcraft-launcher-native"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "artcraft-launcher-core",
  "craft-update",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "artcraft-launcher-ui-egui"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "artcraft-launcher-core",
  "craft-ui",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "artcraft-launcher-web"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "artcraft-launcher-core",
  "artcraft-launcher-ui-egui",
@@ -989,6 +989,16 @@ dependencies = [
  "unicode-bidi",
  "windows-registry",
  "writeable",
+]
+
+[[package]]
+name = "craft-publik"
+version = "0.2.0"
+source = "git+https://github.com/Blueturboguy07/craft-publik?rev=082377e177a716ec4fa5dbe7b371ca5940f97be6#082377e177a716ec4fa5dbe7b371ca5940f97be6"
+dependencies = [
+ "egui",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6223,7 +6233,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "jiff",
  "semver",
